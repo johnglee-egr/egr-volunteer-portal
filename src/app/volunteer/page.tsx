@@ -314,7 +314,7 @@ export default function VolunteerPortal() {
   // ── Home: pick a path ──────────────────────────────────────────────────────
   if (step === "choose") {
     return (
-      <div className="max-w-lg mx-auto mt-20 px-4">
+      <div className="max-w-lg mx-auto mt-10 px-4 pb-16">
         <h1 className="text-3xl font-bold text-amber-900 text-center mb-2">Harvest Festival</h1>
         <p className="text-center text-gray-500 mb-10">Volunteer Portal</p>
         <div className="flex flex-col gap-5">
