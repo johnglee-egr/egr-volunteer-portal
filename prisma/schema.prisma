@@ -1,0 +1,146 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Volunteer {
+  id               String                @id @default(cuid())
+  name             String
+  email            String?
+  phone            String?
+  role             String                @default("volunteer") // volunteer, team_lead
+  pendingRole      String?               // role awaiting admin approval e.g. "team_lead"
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  assignments      Assignment[]
+  pairRequests     PairRequest[]         @relation("requester")
+  pairTargets      PairRequest[]         @relation("partner")
+  groupLeaderOf    VolunteerGroup[]      @relation("groupLeader")
+  groupMemberships VolunteerGroupMember[]
+  teamsLed         Team[]                @relation("teamLeader")
+  teamMemberships  TeamMember[]
+}
+
+model Category {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  description     String?
+  color           String?
+  sortOrder       Int      @default(0)
+  type            String   @default("throughout") // "one-time" or "throughout"
+  stationCount    Int      @default(1)
+  volsPerStation  Int      @default(1)
+  createdAt       DateTime @default(now())
+  shifts          Shift[]
+}
+
+model Shift {
+  id           String       @id @default(cuid())
+  title        String
+  description  String?
+  date         DateTime
+  startTime    String
+  endTime      String
+  capacity     Int          @default(1)
+  stationNames String?
+  categoryId   String
+  category     Category     @relation(fields: [categoryId], references: [id])
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  assignments  Assignment[]
+}
+
+model Assignment {
+  id              String    @id @default(cuid())
+  volunteerId     String
+  shiftId         String
+  stationIndex    Int?
+  status          String    @default("confirmed") // confirmed, cancelled
+  assignedBy      String    @default("self") // self, admin, triage
+  reminded24h     Boolean   @default(false)
+  reminded2h      Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  volunteer       Volunteer @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  shift           Shift     @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@unique([volunteerId, shiftId])
+}
+
+model PairRequest {
+  id          String    @id @default(cuid())
+  requesterId String
+  partnerId   String
+  shiftId     String?
+  message     String?
+  status      String    @default("pending") // pending, approved, denied
+  createdAt   DateTime  @default(now())
+  requester   Volunteer @relation("requester", fields: [requesterId], references: [id], onDelete: Cascade)
+  partner     Volunteer @relation("partner", fields: [partnerId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  type        String   // email, sms
+  recipient   String
+  subject     String?
+  message     String
+  status      String   @default("pending") // pending, sent, failed
+  sentAt      DateTime?
+  createdAt   DateTime @default(now())
+}
+
+model VolunteerGroup {
+  id        String                @id @default(cuid())
+  name      String
+  leaderId  String
+  leader    Volunteer             @relation("groupLeader", fields: [leaderId], references: [id])
+  status    String                @default("pending") // pending, approved, denied
+  message   String?
+  createdAt DateTime              @default(now())
+  members   VolunteerGroupMember[]
+}
+
+model VolunteerGroupMember {
+  id          String         @id @default(cuid())
+  groupId     String
+  volunteerId String
+  group       VolunteerGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  volunteer   Volunteer      @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, volunteerId])
+}
+
+model Team {
+  id        String       @id @default(cuid())
+  name      String
+  leaderId  String
+  leader    Volunteer    @relation("teamLeader", fields: [leaderId], references: [id])
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  members   TeamMember[]
+}
+
+model TeamMember {
+  id          String    @id @default(cuid())
+  teamId      String
+  volunteerId String
+  team        Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  volunteer   Volunteer @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, volunteerId])
+}
+
+model FestivalSettings {
+  id            String   @id @default("main")
+  festivalName  String   @default("Harvest Beer Festival")
+  festivalDate  String?
+  festivalTime  String?
+  contactEmail  String?
+  contactPhone  String?
+  welcomeMessage String?
+  updatedAt     DateTime @updatedAt
+}
