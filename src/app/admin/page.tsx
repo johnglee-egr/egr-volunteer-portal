@@ -317,6 +317,12 @@ export default function AdminDashboard() {
   const [volEmail, setVolEmail] = useState("");
   const [volPhone, setVolPhone] = useState("");
 
+  // Post-create assignment panel
+  const [newlyCreatedVol, setNewlyCreatedVol] = useState<{ id: string; name: string } | null>(null);
+  const [postCreateMode, setPostCreateMode] = useState<"none" | "team" | "pair">("none");
+  const [postCreateTeamId, setPostCreateTeamId] = useState("");
+  const [postCreatePairWithId, setPostCreatePairWithId] = useState("");
+
   // Category drill-down (double-click a category to see its shifts)
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
 
@@ -675,14 +681,57 @@ export default function AdminDashboard() {
       body: JSON.stringify({ name: volName, email: volEmail || null, phone: volPhone }),
     });
     if (res.ok) {
-      setSuccess("Volunteer added!");
+      const created = await res.json();
+      setSuccess(`${created.name} added!`);
       setShowVolunteerForm(false);
+      setNewlyCreatedVol({ id: created.id, name: created.name });
+      setPostCreateMode("none");
+      setPostCreateTeamId("");
+      setPostCreatePairWithId("");
       setVolName(""); setVolEmail(""); setVolPhone("");
       loadData();
     } else {
       const data = await res.json();
       setError(data.error || "Failed to add volunteer.");
     }
+  };
+
+  const handlePostCreateAssign = async () => {
+    if (!newlyCreatedVol) return;
+    clearMessages();
+    if (postCreateMode === "team" && postCreateTeamId) {
+      const res = await fetch("/api/teams", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: postCreateTeamId, addMembers: [{ name: newlyCreatedVol.name }] }),
+      });
+      if (res.ok) {
+        setSuccess(`${newlyCreatedVol.name} added to team!`);
+        loadData();
+      } else {
+        const data = await res.json();
+        setError(data.error || "Failed to add to team.");
+      }
+    } else if (postCreateMode === "pair" && postCreatePairWithId) {
+      const partner = volunteers.find((v: Volunteer) => v.id === postCreatePairWithId);
+      if (!partner) return;
+      const res = await fetch("/api/pair-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requesterId: newlyCreatedVol.id, partnerName: partner.name }),
+      });
+      if (res.ok) {
+        setSuccess(`${newlyCreatedVol.name} paired with ${partner.name}!`);
+        loadData();
+      } else {
+        const data = await res.json();
+        setError(data.error || "Failed to create pair.");
+      }
+    }
+    setNewlyCreatedVol(null);
+    setPostCreateMode("none");
+    setPostCreateTeamId("");
+    setPostCreatePairWithId("");
   };
 
   const handleDeleteVolunteer = async (v: Volunteer) => {
@@ -1925,6 +1974,61 @@ export default function AdminDashboard() {
               </div>
               <button type="submit" className={btnPrimary}>Add Volunteer</button>
             </form>
+          )}
+
+          {/* Post-create assignment panel */}
+          {newlyCreatedVol && (
+            <div className="bg-green-50 border border-green-200 rounded-xl p-5 mb-6">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-green-600 text-lg">✅</span>
+                <span className="font-semibold text-green-900">{newlyCreatedVol.name} added!</span>
+                <span className="text-sm text-gray-500 ml-1">— assign them now? <span className="text-gray-400">(optional)</span></span>
+              </div>
+              <div className="flex flex-wrap gap-3 mb-4">
+                <label className={`flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 transition-colors text-sm font-medium ${postCreateMode === "team" ? "border-amber-500 bg-amber-50 text-amber-800" : "border-gray-200 bg-white text-gray-700"}`}>
+                  <input type="radio" name="postCreate" value="team" checked={postCreateMode === "team"}
+                    onChange={() => { setPostCreateMode("team"); setPostCreatePairWithId(""); }}
+                    className="accent-amber-600" />
+                  👥 Add to a Team
+                </label>
+                <label className={`flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 transition-colors text-sm font-medium ${postCreateMode === "pair" ? "border-purple-500 bg-purple-50 text-purple-800" : "border-gray-200 bg-white text-gray-700"}`}>
+                  <input type="radio" name="postCreate" value="pair" checked={postCreateMode === "pair"}
+                    onChange={() => { setPostCreateMode("pair"); setPostCreateTeamId(""); }}
+                    className="accent-purple-600" />
+                  🤝 Pair with a Volunteer
+                </label>
+              </div>
+              {postCreateMode === "team" && (
+                <select value={postCreateTeamId} onChange={(e) => setPostCreateTeamId(e.target.value)}
+                  className={inputClass + " mb-4 max-w-sm"}>
+                  <option value="">Select a team…</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name} (led by {t.leader.name})</option>
+                  ))}
+                </select>
+              )}
+              {postCreateMode === "pair" && (
+                <select value={postCreatePairWithId} onChange={(e) => setPostCreatePairWithId(e.target.value)}
+                  className={inputClass + " mb-4 max-w-sm"}>
+                  <option value="">Select a volunteer to pair with…</option>
+                  {volunteers.filter((v: Volunteer) => v.id !== newlyCreatedVol.id).map((v: Volunteer) => (
+                    <option key={v.id} value={v.id}>{v.name}</option>
+                  ))}
+                </select>
+              )}
+              <div className="flex gap-3">
+                {postCreateMode !== "none" && (postCreateTeamId || postCreatePairWithId) && (
+                  <button onClick={handlePostCreateAssign} className={btnPrimary}>
+                    Confirm Assignment
+                  </button>
+                )}
+                <button
+                  onClick={() => { setNewlyCreatedVol(null); setPostCreateMode("none"); }}
+                  className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors">
+                  Skip
+                </button>
+              </div>
+            </div>
           )}
 
           <div className="bg-white rounded-lg border border-amber-100 overflow-hidden">
