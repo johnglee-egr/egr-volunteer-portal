@@ -55,7 +55,6 @@ export async function POST(req: NextRequest) {
   // partners can also fit. Otherwise queue for human review.
   let status: "confirmed" | "pending";
   let autoStationIndex = stationIndex;
-  const triagedPartnerIds: string[] = [];
 
   if (assignedBy === "admin") {
     status = "confirmed";
@@ -83,33 +82,21 @@ export async function POST(req: NextRequest) {
 
     if (slotsAvailable >= slotsNeeded && !inPendingGroup) {
       status = "confirmed";
-      triagedPartnerIds.push(...partnersToAdd);
       // Auto-assign to first empty station for "throughout" categories with stations
       if (
         autoStationIndex === undefined &&
         shift.category?.type === "throughout" &&
         shift.category.stationCount > 1
       ) {
-        const taken = new Set(
-          shift.assignments
-            .map((a) => a.stationIndex)
-            .filter((s): s is number => s !== null && s !== undefined)
-        );
         const volsPer = shift.category.volsPerStation || 1;
         const counts = new Map<number, number>();
         shift.assignments.forEach((a) => {
           if (a.stationIndex != null) counts.set(a.stationIndex, (counts.get(a.stationIndex) || 0) + 1);
         });
         for (let i = 0; i < shift.category.stationCount; i++) {
-          if ((counts.get(i) || 0) < volsPer) {
-            autoStationIndex = i;
-            break;
-          }
+          if ((counts.get(i) || 0) < volsPer) { autoStationIndex = i; break; }
         }
-        // Fallback: pick lowest index regardless
-        if (autoStationIndex === undefined && taken.size > 0) {
-          autoStationIndex = 0;
-        }
+        if (autoStationIndex === undefined && shift.assignments.length > 0) autoStationIndex = 0;
       }
     } else {
       status = "pending";
@@ -127,25 +114,42 @@ export async function POST(req: NextRequest) {
         include: { volunteer: true, shift: true },
       });
 
-  // Auto-add approved partners on the same shift (only when triaged through)
-  for (const pid of triagedPartnerIds) {
-    const existingPartner = await prisma.assignment.findUnique({
-      where: { volunteerId_shiftId: { volunteerId: pid, shiftId } },
+  // ─── Auto-assign approved partners ──────────────────────────────────────────
+  // Runs for both admin and self-signup confirmed assignments.
+  // If the primary assignment is confirmed, pull all approved pair partners
+  // and confirm them on the same shift automatically.
+  const autoAssignedPartners: string[] = [];
+  if (status === "confirmed") {
+    const partnerLinks = await prisma.pairRequest.findMany({
+      where: {
+        OR: [{ requesterId: volunteerId }, { partnerId: volunteerId }],
+        status: "approved",
+      },
     });
-    if (existingPartner && existingPartner.status === "confirmed") continue;
-    if (existingPartner) {
-      await prisma.assignment.update({
-        where: { id: existingPartner.id },
-        data: { status: "confirmed", assignedBy: "triage", ...(autoStationIndex !== undefined ? { stationIndex: autoStationIndex } : {}) },
+    const partnerIds = partnerLinks.map((p) =>
+      p.requesterId === volunteerId ? p.partnerId : p.requesterId
+    );
+
+    for (const pid of partnerIds) {
+      const existingPartner = await prisma.assignment.findUnique({
+        where: { volunteerId_shiftId: { volunteerId: pid, shiftId } },
       });
-    } else {
-      await prisma.assignment.create({
-        data: { volunteerId: pid, shiftId, status: "confirmed", assignedBy: "triage", ...(autoStationIndex !== undefined ? { stationIndex: autoStationIndex } : {}) },
-      });
+      if (existingPartner?.status === "confirmed") continue; // already there
+      if (existingPartner) {
+        await prisma.assignment.update({
+          where: { id: existingPartner.id },
+          data: { status: "confirmed", assignedBy: "pair-auto", ...(autoStationIndex !== undefined ? { stationIndex: autoStationIndex } : {}) },
+        });
+      } else {
+        await prisma.assignment.create({
+          data: { volunteerId: pid, shiftId, status: "confirmed", assignedBy: "pair-auto", ...(autoStationIndex !== undefined ? { stationIndex: autoStationIndex } : {}) },
+        });
+      }
+      autoAssignedPartners.push(pid);
     }
   }
 
-  return NextResponse.json({ ...assignment, triaged: status === "confirmed" && assignedBy !== "admin", autoAssignedPartners: triagedPartnerIds.length }, { status: 201 });
+  return NextResponse.json({ ...assignment, triaged: status === "confirmed" && assignedBy !== "admin", autoAssignedPartners: autoAssignedPartners.length }, { status: 201 });
 }
 
 export async function PUT(req: NextRequest) {
