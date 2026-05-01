@@ -10,7 +10,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { requesterId, partnerName, partnerEmail, partnerPhone, shiftId, message } = await req.json();
+  const { requesterId, partnerName, partnerEmail, partnerPhone, shiftId, message, autoApprove } = await req.json();
 
   // Find partner by name
   let partner = await prisma.volunteer.findFirst({
@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
       partnerId: partner.id,
       shiftId: shiftId || null,
       message: message || null,
+      status: autoApprove ? "approved" : "pending",
     },
     include: { requester: true, partner: true },
   });

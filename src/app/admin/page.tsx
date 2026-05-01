@@ -768,7 +768,7 @@ export default function AdminDashboard() {
       const res = await fetch("/api/pair-requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requesterId: newlyCreatedVol.id, partnerName: partner.name }),
+        body: JSON.stringify({ requesterId: newlyCreatedVol.id, partnerName: partner.name, autoApprove: true }),
       });
       if (res.ok) {
         setSuccess(`${newlyCreatedVol.name} paired with ${partner.name}!`);
