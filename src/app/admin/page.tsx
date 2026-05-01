@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, FormEvent } from "react";
 import TimeInput from "@/components/TimeInput";
+import NotificationsPanel from "./NotificationsPanel";
 
 interface Volunteer {
   id: string;
@@ -117,6 +118,10 @@ export default function AdminDashboard() {
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  // Confirmation dialog
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
+  const showConfirm = (message: string, action: () => void) => setConfirmDialog({ message, onConfirm: action });
 
   // Forms
   const [showCategoryForm, setShowCategoryForm] = useState(false);
@@ -1128,7 +1133,7 @@ export default function AdminDashboard() {
   };
 
   // Notifications
-  const handleSendReminder = async (shiftId: string) => {
+  const doSendReminder = async (shiftId: string) => {
     clearMessages();
     const res = await fetch("/api/notifications", {
       method: "POST",
@@ -1140,6 +1145,22 @@ export default function AdminDashboard() {
       setSuccess(`Reminders sent to ${data.sent} volunteer(s)!`);
       loadData();
     }
+  };
+
+  const handleSendReminder = (shiftId: string, shiftTitle?: string) => {
+    const label = shiftTitle ? `shift "${shiftTitle}"` : "this shift";
+    showConfirm(`Ready to send reminders to all volunteers on ${label}?`, () => doSendReminder(shiftId));
+  };
+
+  const doSendVolunteerReminder = async (volunteerId: string, volunteerName: string) => {
+    clearMessages();
+    const res = await fetch("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "reminder", volunteerId }),
+    });
+    if (res.ok) setSuccess(`Reminders sent to ${volunteerName}!`);
+    loadData();
   };
 
   const handleBroadcast = async () => {
@@ -1688,7 +1709,7 @@ export default function AdminDashboard() {
                         className="bg-gray-100 text-gray-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-gray-200"
                         title="Print roster for this shift"
                       >🖨 Roster</a>
-                      <button onClick={() => handleSendReminder(shift.id)} className="bg-blue-100 text-blue-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-blue-200">
+                      <button onClick={() => handleSendReminder(shift.id, shift.title)} className="bg-blue-100 text-blue-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-blue-200">
                         Send Reminders
                       </button>
                       <button onClick={() => setShowAssignForm(showAssignForm === shift.id ? null : shift.id)} className="bg-green-100 text-green-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-green-200">
@@ -2295,15 +2316,7 @@ export default function AdminDashboard() {
                             Change Assignments
                           </button>
                           <button
-                            onClick={async () => {
-                              clearMessages();
-                              const res = await fetch("/api/notifications", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ type: "reminder", volunteerId: v.id }),
-                              });
-                              if (res.ok) setSuccess(`Reminders sent to ${v.name}!`);
-                            }}
+                            onClick={() => showConfirm(`Ready to send a reminder to ${v.name}?`, () => doSendVolunteerReminder(v.id, v.name))}
                             className="bg-blue-100 text-blue-700 px-3 py-1 rounded text-xs font-medium hover:bg-blue-200"
                           >
                             Send Reminder
@@ -2920,70 +2933,17 @@ export default function AdminDashboard() {
 
       {/* ========= NOTIFICATIONS TAB ========= */}
       {activeTab === "notifications" && (
-        <div>
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold text-amber-900">Notifications</h2>
-            <button onClick={() => setShowBroadcast(!showBroadcast)} className={btnPrimary}>
-              {showBroadcast ? "Cancel" : "Broadcast Message"}
-            </button>
-          </div>
-
-          {showBroadcast && (
-            <div className="bg-white rounded-xl border border-amber-200 p-6 mb-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Message to all volunteers</label>
-                <textarea
-                  value={broadcastMessage}
-                  onChange={(e) => setBroadcastMessage(e.target.value)}
-                  className={inputClass}
-                  rows={4}
-                  placeholder="Important update about the festival..."
-                />
-              </div>
-              <button onClick={handleBroadcast} className={btnPrimary}>Send to All Volunteers</button>
-            </div>
-          )}
-
-          <div className="bg-white rounded-lg border border-amber-100 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-amber-50">
-                <tr>
-                  <th className="text-left px-4 py-3 font-medium text-amber-900">Type</th>
-                  <th className="text-left px-4 py-3 font-medium text-amber-900">Recipient</th>
-                  <th className="text-left px-4 py-3 font-medium text-amber-900">Subject</th>
-                  <th className="text-left px-4 py-3 font-medium text-amber-900">Status</th>
-                  <th className="text-left px-4 py-3 font-medium text-amber-900">Sent</th>
-                </tr>
-              </thead>
-              <tbody>
-                {notifications.map((n) => (
-                  <tr key={n.id} className="border-t border-amber-50 hover:bg-amber-50/50">
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${n.type === "email" ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700"}`}>
-                        {n.type}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">{n.recipient}</td>
-                    <td className="px-4 py-3 text-gray-600 max-w-xs truncate">{n.subject || n.message.substring(0, 50)}</td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                        n.status === "sent" ? "bg-green-100 text-green-700" :
-                        n.status === "failed" ? "bg-red-100 text-red-700" :
-                        "bg-yellow-100 text-yellow-700"
-                      }`}>
-                        {n.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">
-                      {n.sentAt ? new Date(n.sentAt).toLocaleString() : "-"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {notifications.length === 0 && <p className="text-gray-500 text-center py-8">No notifications sent yet.</p>}
-          </div>
-        </div>
+        <NotificationsPanel
+          categories={categories}
+          teams={teams}
+          volunteers={volunteers}
+          notifications={notifications}
+          settings={settings}
+          inputClass={inputClass}
+          btnPrimary={btnPrimary}
+          onRefresh={loadData}
+          onConfirm={showConfirm}
+        />
       )}
 
       {/* ========= SETTINGS TAB ========= */}
@@ -3019,6 +2979,35 @@ export default function AdminDashboard() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Welcome Message</label>
               <textarea value={settings.welcomeMessage} onChange={(e) => setSettings({ ...settings, welcomeMessage: e.target.value })} className={inputClass} rows={3} placeholder="Thank you for volunteering at our festival!" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========= CONFIRMATION DIALOG ========= */}
+      {confirmDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 space-y-5">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl mt-0.5">📢</span>
+              <p className="text-gray-800 font-medium leading-snug">{confirmDialog.message}</p>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  confirmDialog.onConfirm();
+                  setConfirmDialog(null);
+                }}
+                className="px-4 py-2 rounded-lg bg-amber-700 text-white text-sm font-semibold hover:bg-amber-800"
+              >
+                Yes, Send
+              </button>
             </div>
           </div>
         </div>

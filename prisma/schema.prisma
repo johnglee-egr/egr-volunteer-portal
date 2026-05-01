@@ -134,6 +134,34 @@ model TeamMember {
   @@unique([teamId, volunteerId])
 }
 
+model NotificationTemplate {
+  id         String                 @id @default(cuid())
+  name       String
+  subject    String?
+  body       String
+  channel    String                 @default("both") // email | sms | both
+  isPrebuilt Boolean                @default(false)
+  createdAt  DateTime               @default(now())
+  schedules  NotificationSchedule[]
+}
+
+model NotificationSchedule {
+  id            String               @id @default(cuid())
+  name          String
+  templateId    String
+  template      NotificationTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  groupType     String               // all | category | timerange | role | team | unassigned
+  groupValue    String?              // categoryId | "HH:MM-HH:MM" | role name | teamId
+  relativeType  String?              // days_before_festival | day_of | fixed
+  relativeValue Int?                 // e.g. 3 for "3 days before festival"
+  relativeTime  String?              // "HH:MM" time of day to send
+  sendAt        DateTime?            // absolute datetime (for fixed type)
+  isAutomatic   Boolean              @default(false)
+  status        String               @default("pending") // pending | sent | cancelled
+  lastRunAt     DateTime?
+  createdAt     DateTime             @default(now())
+}
+
 model FestivalSettings {
   id            String   @id @default("main")
   festivalName  String   @default("Harvest Beer Festival")

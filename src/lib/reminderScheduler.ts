@@ -1,5 +1,5 @@
 import { prisma } from "./db";
-import { sendReminder } from "./notifications";
+import { sendReminder, sendToGroup } from "./notifications";
 
 // How many minutes ahead of a shift to fire each reminder type.
 // 24h = 1 day before, 2h = right before they need to leave home.
@@ -91,21 +91,69 @@ function minutesUntilShift(date: Date, startTime: string, now: Date): number | n
   return Math.round((start.getTime() - now.getTime()) / 60000);
 }
 
+// ── Process auto-schedules ───────────────────────────────────────────────────
+
+export async function processSchedules(now: Date = new Date()): Promise<void> {
+  const settings = await prisma.festivalSettings.findUnique({ where: { id: "main" } });
+
+  const schedules = await prisma.notificationSchedule.findMany({
+    where: { isAutomatic: true, status: "pending" },
+    include: { template: true },
+  });
+
+  for (const schedule of schedules) {
+    const sendAt = calcSendAt(schedule, settings);
+    if (!sendAt || now < sendAt) continue;
+
+    try {
+      await sendToGroup(schedule.templateId, schedule.groupType, schedule.groupValue);
+      await prisma.notificationSchedule.update({
+        where: { id: schedule.id },
+        data: { status: "sent", lastRunAt: now },
+      });
+      console.log(`[schedules] fired schedule "${schedule.name}"`);
+    } catch (e) {
+      console.error(`[schedules] failed schedule ${schedule.id}:`, e);
+    }
+  }
+}
+
+function calcSendAt(
+  s: { relativeType?: string | null; relativeValue?: number | null; relativeTime?: string | null; sendAt?: Date | null },
+  settings: { festivalDate?: string | null } | null
+): Date | null {
+  if (s.relativeType === "fixed" && s.sendAt) return new Date(s.sendAt);
+  if (!settings?.festivalDate) return null;
+
+  const fest = new Date(settings.festivalDate);
+  const [h, m] = (s.relativeTime || "08:00").split(":").map(Number);
+
+  if (s.relativeType === "days_before_festival" && s.relativeValue != null) {
+    const d = new Date(fest);
+    d.setDate(d.getDate() - s.relativeValue);
+    d.setHours(h, m, 0, 0);
+    return d;
+  }
+  if (s.relativeType === "day_of") {
+    const d = new Date(fest);
+    d.setHours(h, m, 0, 0);
+    return d;
+  }
+  return null;
+}
+
 // ── Long-running scheduler for instrumentation.ts ────────────────────────────
 let started = false;
 export function startReminderScheduler(intervalMin = 5): void {
   if (started) return;
   started = true;
   console.log(`[reminders] scheduler started, interval=${intervalMin}min`);
-  // Run once shortly after boot, then on the interval
-  setTimeout(() => { processReminders().catch((e) => console.error("[reminders] error", e)); }, 5000);
-  setInterval(() => {
-    processReminders()
-      .then((r) => {
-        if (r.sent24h || r.sent2h || r.errors) {
-          console.log(`[reminders] sent24h=${r.sent24h} sent2h=${r.sent2h} errors=${r.errors}`);
-        }
-      })
-      .catch((e) => console.error("[reminders] error", e));
-  }, intervalMin * 60 * 1000);
+
+  const runAll = async () => {
+    await processReminders().catch((e) => console.error("[reminders] error", e));
+    await processSchedules().catch((e) => console.error("[schedules] error", e));
+  };
+
+  setTimeout(runAll, 5000);
+  setInterval(runAll, intervalMin * 60 * 1000);
 }

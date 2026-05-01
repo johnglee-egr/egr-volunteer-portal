@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { sendReminder, sendEmail, sendSMS } from "@/lib/notifications";
+import { sendReminder, sendEmail, sendSMS, sendToGroup } from "@/lib/notifications";
 
 export async function GET() {
   const notifications = await prisma.notification.findMany({
@@ -12,7 +12,7 @@ export async function GET() {
 
 // Send reminders to volunteers for their shifts
 export async function POST(req: NextRequest) {
-  const { type, shiftId, volunteerId, customMessage } = await req.json();
+  const { type, shiftId, volunteerId, customMessage, templateId, groupType, groupValue } = await req.json();
 
   if (type === "reminder" && shiftId) {
     // Send reminders to all volunteers on a shift
@@ -57,6 +57,12 @@ export async function POST(req: NextRequest) {
       }
     }
     return NextResponse.json({ sent: results.length, results });
+  }
+
+  if (type === "group" && templateId && groupType) {
+    // Send a template to a resolved recipient group
+    const result = await sendToGroup(templateId, groupType, groupValue ?? null);
+    return NextResponse.json(result);
   }
 
   return NextResponse.json({ error: "Invalid notification type" }, { status: 400 });
