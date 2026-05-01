@@ -322,6 +322,11 @@ export default function AdminDashboard() {
   const [postCreateMode, setPostCreateMode] = useState<"none" | "team" | "pair">("none");
   const [postCreateTeamId, setPostCreateTeamId] = useState("");
   const [postCreatePairWithId, setPostCreatePairWithId] = useState("");
+  // Pair with a brand-new volunteer (inline create)
+  const [postCreatePairNew, setPostCreatePairNew] = useState(false);
+  const [postCreatePairNewName, setPostCreatePairNewName] = useState("");
+  const [postCreatePairNewPhone, setPostCreatePairNewPhone] = useState("");
+  const [postCreatePairNewEmail, setPostCreatePairNewEmail] = useState("");
 
   // Category drill-down (double-click a category to see its shifts)
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
@@ -696,9 +701,21 @@ export default function AdminDashboard() {
     }
   };
 
+  const resetPostCreatePanel = () => {
+    setNewlyCreatedVol(null);
+    setPostCreateMode("none");
+    setPostCreateTeamId("");
+    setPostCreatePairWithId("");
+    setPostCreatePairNew(false);
+    setPostCreatePairNewName("");
+    setPostCreatePairNewPhone("");
+    setPostCreatePairNewEmail("");
+  };
+
   const handlePostCreateAssign = async () => {
     if (!newlyCreatedVol) return;
     clearMessages();
+
     if (postCreateMode === "team" && postCreateTeamId) {
       const res = await fetch("/api/teams", {
         method: "PUT",
@@ -711,10 +728,43 @@ export default function AdminDashboard() {
       } else {
         const data = await res.json();
         setError(data.error || "Failed to add to team.");
+        return;
       }
-    } else if (postCreateMode === "pair" && postCreatePairWithId) {
-      const partner = volunteers.find((v: Volunteer) => v.id === postCreatePairWithId);
+    } else if (postCreateMode === "pair") {
+      let partnerId = postCreatePairWithId;
+      let partnerName = volunteers.find((v: Volunteer) => v.id === partnerId)?.name ?? "";
+
+      // Inline-create: register the new partner first
+      if (postCreatePairNew) {
+        if (!postCreatePairNewName.trim() || !postCreatePairNewPhone.trim()) {
+          setError("Partner name and phone are required.");
+          return;
+        }
+        const createRes = await fetch("/api/volunteers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: postCreatePairNewName.trim(),
+            phone: postCreatePairNewPhone.trim(),
+            email: postCreatePairNewEmail.trim() || null,
+          }),
+        });
+        if (!createRes.ok) {
+          const data = await createRes.json();
+          setError(data.error || "Failed to create partner volunteer.");
+          return;
+        }
+        const created = await createRes.json();
+        partnerId = created.id;
+        partnerName = created.name;
+      }
+
+      if (!partnerId) return;
+      const partner = postCreatePairNew
+        ? { name: partnerName }
+        : volunteers.find((v: Volunteer) => v.id === partnerId);
       if (!partner) return;
+
       const res = await fetch("/api/pair-requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -726,12 +776,11 @@ export default function AdminDashboard() {
       } else {
         const data = await res.json();
         setError(data.error || "Failed to create pair.");
+        return;
       }
     }
-    setNewlyCreatedVol(null);
-    setPostCreateMode("none");
-    setPostCreateTeamId("");
-    setPostCreatePairWithId("");
+
+    resetPostCreatePanel();
   };
 
   const handleDeleteVolunteer = async (v: Volunteer) => {
@@ -2008,22 +2057,62 @@ export default function AdminDashboard() {
                 </select>
               )}
               {postCreateMode === "pair" && (
-                <select value={postCreatePairWithId} onChange={(e) => setPostCreatePairWithId(e.target.value)}
-                  className={inputClass + " mb-4 max-w-sm"}>
-                  <option value="">Select a volunteer to pair with…</option>
-                  {volunteers.filter((v: Volunteer) => v.id !== newlyCreatedVol.id).map((v: Volunteer) => (
-                    <option key={v.id} value={v.id}>{v.name}</option>
-                  ))}
-                </select>
+                <div className="mb-4 space-y-3">
+                  {/* Toggle: existing vs new */}
+                  <div className="flex gap-3 text-sm">
+                    <button
+                      onClick={() => { setPostCreatePairNew(false); setPostCreatePairWithId(""); }}
+                      className={`px-3 py-1.5 rounded-lg border transition-colors ${!postCreatePairNew ? "border-purple-500 bg-purple-50 text-purple-800 font-medium" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+                      Existing volunteer
+                    </button>
+                    <button
+                      onClick={() => { setPostCreatePairNew(true); setPostCreatePairWithId(""); }}
+                      className={`px-3 py-1.5 rounded-lg border transition-colors ${postCreatePairNew ? "border-purple-500 bg-purple-50 text-purple-800 font-medium" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+                      + Create new volunteer to pair with
+                    </button>
+                  </div>
+
+                  {!postCreatePairNew && (
+                    <select value={postCreatePairWithId} onChange={(e) => setPostCreatePairWithId(e.target.value)}
+                      className={inputClass + " max-w-sm"}>
+                      <option value="">Select a volunteer…</option>
+                      {volunteers.filter((v: Volunteer) => v.id !== newlyCreatedVol.id).map((v: Volunteer) => (
+                        <option key={v.id} value={v.id}>{v.name}</option>
+                      ))}
+                    </select>
+                  )}
+
+                  {postCreatePairNew && (
+                    <div className="bg-white border border-purple-200 rounded-lg p-4 max-w-sm space-y-3">
+                      <p className="text-xs text-purple-700 font-medium uppercase tracking-wide">New partner details</p>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+                        <input value={postCreatePairNewName} onChange={(e) => setPostCreatePairNewName(e.target.value)}
+                          className={inputClass} placeholder="Full name" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Phone *</label>
+                        <input type="tel" value={postCreatePairNewPhone}
+                          onChange={(e) => setPostCreatePairNewPhone(fmtPhoneInput(e.target.value))}
+                          className={inputClass} placeholder="555-123-4567" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Email <span className="text-gray-400 font-normal">(optional)</span></label>
+                        <input type="email" value={postCreatePairNewEmail}
+                          onChange={(e) => setPostCreatePairNewEmail(e.target.value)}
+                          className={inputClass} />
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
               <div className="flex gap-3">
-                {postCreateMode !== "none" && (postCreateTeamId || postCreatePairWithId) && (
+                {postCreateMode !== "none" && (postCreateTeamId || postCreatePairWithId || (postCreatePairNew && postCreatePairNewName && postCreatePairNewPhone)) && (
                   <button onClick={handlePostCreateAssign} className={btnPrimary}>
                     Confirm Assignment
                   </button>
                 )}
-                <button
-                  onClick={() => { setNewlyCreatedVol(null); setPostCreateMode("none"); }}
+                <button onClick={resetPostCreatePanel}
                   className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors">
                   Skip
                 </button>
