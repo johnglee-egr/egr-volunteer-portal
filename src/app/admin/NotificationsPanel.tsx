@@ -35,7 +35,7 @@ interface Props {
   inputClass: string;
   btnPrimary: string;
   onRefresh: () => void;
-  onConfirm: (message: string, action: () => void) => void;
+  onConfirm: (message: string, action: () => void, confirmLabel?: string) => void;
 }
 
 // ── Helper ───────────────────────────────────────────────────────────────────
@@ -117,6 +117,7 @@ export default function NotificationsPanel({
   const [tplBody, setTplBody] = useState("");
   const [tplChannel, setTplChannel] = useState("both");
   const [tplLoading, setTplLoading] = useState(false);
+  const [tplError, setTplError] = useState("");
 
   // ─ Schedule state ─────────────────────────────────────────────────────────
   const [schedules, setSchedules] = useState<NotificationSchedule[]>([]);
@@ -131,13 +132,15 @@ export default function NotificationsPanel({
   const [schedFixedAt, setSchedFixedAt] = useState("");
   const [schedAutomatic, setSchedAutomatic] = useState(true);
   const [schedLoading, setSchedLoading] = useState(false);
+  const [schedError, setSchedError] = useState("");
+  const [sendError, setSendError] = useState("");
 
   // ─ Send Now state ─────────────────────────────────────────────────────────
   const [sendTemplateId, setSendTemplateId] = useState("");
   const [sendGroupType, setSendGroupType] = useState("all");
   const [sendGroupValue, setSendGroupValue] = useState("");
   const [sendLoading, setSendLoading] = useState(false);
-  const [sendResult, setSendResult] = useState<{ sent: number; volunteerCount: number } | null>(null);
+  const [sendResult, setSendResult] = useState<{ sent: number; volunteerCount: number; reachable?: number } | null>(null);
 
   // ─ Load data ──────────────────────────────────────────────────────────────
   const loadTemplates = async () => {
@@ -157,7 +160,7 @@ export default function NotificationsPanel({
   // ─ Templates CRUD ─────────────────────────────────────────────────────────
   const resetTplForm = () => {
     setTplName(""); setTplSubject(""); setTplBody(""); setTplChannel("both");
-    setEditingTpl(null); setShowNewTpl(false);
+    setEditingTpl(null); setShowNewTpl(false); setTplError("");
   };
 
   const startEditTpl = (t: NotificationTemplate) => {
@@ -172,22 +175,26 @@ export default function NotificationsPanel({
   const saveTpl = async () => {
     if (!tplName || !tplBody) return;
     setTplLoading(true);
-    if (editingTpl) {
-      await fetch("/api/notification-templates", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: editingTpl.id, name: tplName, subject: tplSubject, body: tplBody, channel: tplChannel }),
-      });
-    } else {
-      await fetch("/api/notification-templates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: tplName, subject: tplSubject, body: tplBody, channel: tplChannel }),
-      });
-    }
+    setTplError("");
+    const res = editingTpl
+      ? await fetch("/api/notification-templates", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: editingTpl.id, name: tplName, subject: tplSubject, body: tplBody, channel: tplChannel }),
+        })
+      : await fetch("/api/notification-templates", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: tplName, subject: tplSubject, body: tplBody, channel: tplChannel }),
+        });
     setTplLoading(false);
-    resetTplForm();
-    loadTemplates();
+    if (res.ok) {
+      resetTplForm();
+      loadTemplates();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      setTplError(data.error || "Failed to save template. Please try again.");
+    }
   };
 
   const deleteTpl = async (id: string) => {
@@ -233,15 +240,20 @@ export default function NotificationsPanel({
       payload.relativeTime = schedTime;
     }
 
-    await fetch("/api/notification-schedules", {
+    const res = await fetch("/api/notification-schedules", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
 
     setSchedLoading(false);
-    resetSchedForm();
-    loadSchedules();
+    if (res.ok) {
+      resetSchedForm();
+      loadSchedules();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      setSchedError(data.error || "Failed to save schedule. Please try again.");
+    }
   };
 
   const deleteSched = async (id: string) => {
@@ -271,15 +283,23 @@ export default function NotificationsPanel({
     if (!sendTemplateId || !sendGroupType) return;
     setSendLoading(true);
     setSendResult(null);
-    const res = await fetch("/api/notifications", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "group", templateId: sendTemplateId, groupType: sendGroupType, groupValue: sendGroupValue || null }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setSendResult(data);
-      onRefresh();
+    setSendError("");
+    try {
+      const res = await fetch("/api/notifications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "group", templateId: sendTemplateId, groupType: sendGroupType, groupValue: sendGroupValue || null }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSendResult(data);
+        onRefresh();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setSendError(data.error || "Send failed. Please try again.");
+      }
+    } catch {
+      setSendError("Network error. Please check your connection and try again.");
     }
     setSendLoading(false);
   };
@@ -429,9 +449,14 @@ export default function NotificationsPanel({
               {sendLoading ? "Sending…" : "Send Now"}
             </button>
 
+            {sendError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                ❌ {sendError}
+              </div>
+            )}
             {sendResult && (
               <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800">
-                ✅ Sent {sendResult.sent} message(s) to {sendResult.volunteerCount} volunteer(s).
+                ✅ Sent {sendResult.sent} message(s) to {sendResult.reachable ?? sendResult.volunteerCount} reachable volunteer(s){sendResult.volunteerCount !== sendResult.reachable ? ` (${sendResult.volunteerCount} total in group)` : ""}.
               </div>
             )}
           </div>
@@ -489,6 +514,7 @@ export default function NotificationsPanel({
                 <label className="block text-sm font-medium text-gray-700 mb-1">Message Body *</label>
                 <textarea value={tplBody} onChange={(e) => setTplBody(e.target.value)} className={`${inputClass} font-mono text-sm`} rows={8} placeholder="Hi {volunteer_name}, ..." />
               </div>
+              {tplError && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{tplError}</div>}
               <div className="flex gap-3">
                 <button onClick={saveTpl} disabled={tplLoading || !tplName || !tplBody} className={`${btnPrimary} disabled:opacity-50`}>
                   {tplLoading ? "Saving…" : editingTpl ? "Save Changes" : "Create Template"}
@@ -523,7 +549,7 @@ export default function NotificationsPanel({
                     </button>
                     {!t.isPrebuilt && (
                       <button
-                        onClick={() => onConfirm(`Delete template "${t.name}"?`, () => deleteTpl(t.id))}
+                        onClick={() => onConfirm(`Delete template "${t.name}"?`, () => deleteTpl(t.id), "Yes, Delete")}
                         className="text-xs px-3 py-1 rounded bg-red-100 text-red-600 hover:bg-red-200 font-medium"
                       >
                         Delete
@@ -643,6 +669,7 @@ export default function NotificationsPanel({
                 </span>
               </div>
 
+              {schedError && <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded-lg">{schedError}</div>}
               <div className="flex gap-3">
                 <button onClick={saveSched} disabled={schedLoading || !schedName || !schedTemplateId} className={`${btnPrimary} disabled:opacity-50`}>
                   {schedLoading ? "Saving…" : "Create Schedule"}
@@ -689,20 +716,22 @@ export default function NotificationsPanel({
                     {/* Manual fire */}
                     {s.status !== "sent" && (
                       <button
-                        onClick={() => onConfirm(`Send "${s.template.name}" to ${labelForGroup(s.groupType, s.groupValue, categories, teams)} now?`, async () => {
-                          await fetch("/api/notifications", {
+                        onClick={() => onConfirm(`Send "${s.template.name}" to ${labelForGroup(s.groupType, s.groupValue, categories, teams)} now?`, () => {
+                          // Fire-and-forget — errors will surface in the notifications history
+                          fetch("/api/notifications", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ type: "group", templateId: s.templateId, groupType: s.groupType, groupValue: s.groupValue }),
+                            body: JSON.stringify({ type: "group", templateId: s.templateId, groupType: s.groupType, groupValue: s.groupValue ?? null }),
+                          }).then((res) => {
+                            if (res.ok) {
+                              // Mark schedule as sent
+                              fetch("/api/notification-schedules", {
+                                method: "PUT",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ id: s.id, status: "sent", lastRunAt: new Date().toISOString() }),
+                              }).then(() => { loadSchedules(); onRefresh(); });
+                            }
                           });
-                          // Mark as sent
-                          await fetch("/api/notification-schedules", {
-                            method: "PUT",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ id: s.id, status: "sent", lastRunAt: new Date().toISOString() }),
-                          });
-                          loadSchedules();
-                          onRefresh();
                         })}
                         className="text-xs px-3 py-1 rounded bg-blue-100 text-blue-700 hover:bg-blue-200 font-medium"
                       >
@@ -710,7 +739,7 @@ export default function NotificationsPanel({
                       </button>
                     )}
                     <button
-                      onClick={() => onConfirm(`Delete schedule "${s.name}"?`, () => deleteSched(s.id))}
+                      onClick={() => onConfirm(`Delete schedule "${s.name}"?`, () => deleteSched(s.id), "Yes, Delete")}
                       className="text-xs px-3 py-1 rounded bg-red-100 text-red-600 hover:bg-red-200 font-medium"
                     >
                       Delete

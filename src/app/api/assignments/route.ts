@@ -188,12 +188,16 @@ export async function DELETE(req: NextRequest) {
       where: { id: assignmentId },
       data: { status: "cancelled" },
     });
-  } else if (volunteerId && shiftId) {
+    return NextResponse.json({ success: true });
+  }
+
+  if (volunteerId && shiftId) {
     await prisma.assignment.update({
       where: { volunteerId_shiftId: { volunteerId, shiftId } },
       data: { status: "cancelled" },
     });
+    return NextResponse.json({ success: true });
   }
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ error: "assignmentId or (volunteerId + shiftId) required" }, { status: 400 });
 }

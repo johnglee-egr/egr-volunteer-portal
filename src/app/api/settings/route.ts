@@ -7,7 +7,7 @@ export async function GET() {
     settings = await prisma.festivalSettings.create({
       data: {
         id: "main",
-        festivalName: "Harvest Beer Festival",
+        festivalName: "EGR Harvest + Beer Festival",
       },
     });
   }

@@ -1,25 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-
-// Auto-format phone input as xxx-xxx-xxxx while typing
-const fmtPhoneInput = (v: string) => {
-  const d = v.replace(/\D/g, "").slice(0, 10);
-  if (d.length <= 3) return d;
-  if (d.length <= 6) return `${d.slice(0, 3)}-${d.slice(3)}`;
-  return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
-};
-
-const fmt12 = (t: string) => {
-  if (!t) return "";
-  const [hStr, mStr] = t.split(":");
-  let h = parseInt(hStr);
-  const m = mStr || "00";
-  const ampm = h >= 12 ? "PM" : "AM";
-  if (h === 0) h = 12;
-  else if (h > 12) h -= 12;
-  return `${h}:${m} ${ampm}`;
-};
+import { fmt12, fmtPhoneInput } from "@/lib/formatters";
 
 interface Shift {
   id: string;
@@ -69,6 +51,8 @@ export default function VolunteerPortal() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [registerLoading, setRegisterLoading] = useState(false);
 
   // Login form
   const [name, setName] = useState("");
@@ -108,12 +92,13 @@ export default function VolunteerPortal() {
       setError("Please enter your name and email or phone number.");
       return;
     }
-
+    setLoginLoading(true);
     const res = await fetch("/api/volunteers/lookup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, contact }),
     });
+    setLoginLoading(false);
 
     if (res.ok) {
       const data = await res.json();
@@ -135,12 +120,13 @@ export default function VolunteerPortal() {
       setError("A phone number is required so we can send you shift reminders.");
       return;
     }
-
+    setRegisterLoading(true);
     const res = await fetch("/api/volunteers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, email: email || null, phone: phone || null, role: registerAsTeamLead ? "team_lead" : "volunteer" }),
     });
+    setRegisterLoading(false);
 
     if (res.ok) {
       const data = await res.json();
@@ -236,12 +222,9 @@ export default function VolunteerPortal() {
 
   const refreshData = async () => {
     if (!volunteer) return;
+    const volId = volunteer.id; // capture at call time to avoid stale closure
     const [volRes, shiftRes, teamRes] = await Promise.all([
-      fetch("/api/volunteers/lookup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: volunteer.name, contact: volunteer.email || volunteer.phone }),
-      }),
+      fetch(`/api/volunteers/${volId}`),
       fetch("/api/shifts"),
       fetch("/api/teams"),
     ]);
@@ -252,8 +235,7 @@ export default function VolunteerPortal() {
     if (shiftRes.ok) setShifts(await shiftRes.json());
     if (teamRes.ok) {
       const allTeams: Team[] = await teamRes.json();
-      // Filter to teams this volunteer leads
-      setMyTeams(allTeams.filter((t) => t.leaderId === volunteer.id));
+      setMyTeams(allTeams.filter((t) => t.leaderId === volId));
     }
   };
 
@@ -315,7 +297,7 @@ export default function VolunteerPortal() {
   if (step === "choose") {
     return (
       <div className="max-w-lg mx-auto mt-10 px-4 pb-16">
-        <h1 className="text-3xl font-bold text-amber-900 text-center mb-2">Harvest Festival</h1>
+        <h1 className="text-3xl font-bold text-amber-900 text-center mb-2">EGR Harvest + Beer Festival</h1>
         <p className="text-center text-gray-500 mb-10">Volunteer Portal</p>
         <div className="flex flex-col gap-5">
           <button
@@ -371,9 +353,10 @@ export default function VolunteerPortal() {
             </div>
             <button
               onClick={handleLogin}
-              className="w-full bg-amber-700 text-white py-2 rounded-lg font-medium hover:bg-amber-800 transition-colors"
+              disabled={loginLoading}
+              className="w-full bg-amber-700 text-white py-2 rounded-lg font-medium hover:bg-amber-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Look Up My Schedule
+              {loginLoading ? "Looking up…" : "Look Up My Schedule"}
             </button>
             <button
               onClick={() => { setError(""); setStep("choose"); }}
@@ -446,9 +429,10 @@ export default function VolunteerPortal() {
             </label>
             <button
               onClick={handleRegister}
-              className="w-full bg-green-700 text-white py-2 rounded-lg font-medium hover:bg-green-800 transition-colors"
+              disabled={registerLoading}
+              className="w-full bg-green-700 text-white py-2 rounded-lg font-medium hover:bg-green-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Register
+              {registerLoading ? "Registering…" : "Register"}
             </button>
             <button
               onClick={() => { setError(""); setStep("choose"); }}

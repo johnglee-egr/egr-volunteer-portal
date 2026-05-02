@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 
 const PREBUILT: Array<{ name: string; subject: string; body: string; channel: string; isPrebuilt: boolean }> = [
   {
@@ -49,19 +50,50 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const data = await req.json();
-  const template = await prisma.notificationTemplate.create({ data });
+  const unauthed = await requireAdmin();
+  if (unauthed) return unauthed;
+
+  const { name, body, subject, channel } = await req.json();
+  if (!name?.trim()) return NextResponse.json({ error: "Template name is required." }, { status: 400 });
+  if (!body?.trim()) return NextResponse.json({ error: "Template body is required." }, { status: 400 });
+  const validChannels = ["email", "sms", "both"];
+
+  const template = await prisma.notificationTemplate.create({
+    data: {
+      name: name.trim(),
+      subject: subject?.trim() || null,
+      body: body.trim(),
+      channel: validChannels.includes(channel) ? channel : "both",
+      isPrebuilt: false, // clients can never set this
+    },
+  });
   return NextResponse.json(template, { status: 201 });
 }
 
 export async function PUT(req: NextRequest) {
-  const { id, ...data } = await req.json();
-  const template = await prisma.notificationTemplate.update({ where: { id }, data });
+  const unauthed = await requireAdmin();
+  if (unauthed) return unauthed;
+
+  const { id, name, body, subject, channel } = await req.json();
+  if (!id) return NextResponse.json({ error: "id is required." }, { status: 400 });
+  const validChannels = ["email", "sms", "both"];
+  const updateData: Record<string, unknown> = {};
+  if (name !== undefined) updateData.name = name.trim();
+  if (subject !== undefined) updateData.subject = subject?.trim() || null;
+  if (body !== undefined) updateData.body = body.trim();
+  if (channel !== undefined) updateData.channel = validChannels.includes(channel) ? channel : "both";
+  // isPrebuilt is never updated by clients
+
+  const template = await prisma.notificationTemplate.update({ where: { id }, data: updateData });
   return NextResponse.json(template);
 }
 
 export async function DELETE(req: NextRequest) {
+  const unauthed = await requireAdmin();
+  if (unauthed) return unauthed;
+
   const { id } = await req.json();
+  if (!id) return NextResponse.json({ error: "id is required." }, { status: 400 });
   await prisma.notificationTemplate.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }

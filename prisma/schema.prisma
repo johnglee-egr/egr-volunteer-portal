@@ -164,7 +164,7 @@ model NotificationSchedule {
 
 model FestivalSettings {
   id            String   @id @default("main")
-  festivalName  String   @default("Harvest Beer Festival")
+  festivalName  String   @default("EGR Harvest + Beer Festival")
   festivalDate  String?
   festivalTime  String?
   contactEmail  String?

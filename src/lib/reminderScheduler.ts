@@ -81,13 +81,16 @@ export async function processReminders(now: Date = new Date()): Promise<ProcessR
 }
 
 function minutesUntilShift(date: Date, startTime: string, now: Date): number | null {
-  // shift.date is a Date stored as midnight local; startTime is "HH:MM" 24h
+  // shift.date is a UTC-midnight DateTime from Postgres; startTime is "HH:MM" 24h.
+  // Use UTC date components + HH:MM so the calculation is timezone-stable on any server.
   const [hStr, mStr] = startTime.split(":");
   const h = parseInt(hStr);
   const m = parseInt(mStr || "0");
   if (isNaN(h) || isNaN(m)) return null;
-  const start = new Date(date);
-  start.setHours(h, m, 0, 0);
+  const start = new Date(Date.UTC(
+    date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(),
+    h, m, 0, 0
+  ));
   return Math.round((start.getTime() - now.getTime()) / 60000);
 }
 
@@ -125,19 +128,21 @@ function calcSendAt(
   if (s.relativeType === "fixed" && s.sendAt) return new Date(s.sendAt);
   if (!settings?.festivalDate) return null;
 
+  // Use UTC methods for timezone-stable schedule calculation
   const fest = new Date(settings.festivalDate);
   const [h, m] = (s.relativeTime || "08:00").split(":").map(Number);
 
   if (s.relativeType === "days_before_festival" && s.relativeValue != null) {
-    const d = new Date(fest);
-    d.setDate(d.getDate() - s.relativeValue);
-    d.setHours(h, m, 0, 0);
-    return d;
+    return new Date(Date.UTC(
+      fest.getUTCFullYear(), fest.getUTCMonth(), fest.getUTCDate() - s.relativeValue,
+      h, m, 0, 0
+    ));
   }
   if (s.relativeType === "day_of") {
-    const d = new Date(fest);
-    d.setHours(h, m, 0, 0);
-    return d;
+    return new Date(Date.UTC(
+      fest.getUTCFullYear(), fest.getUTCMonth(), fest.getUTCDate(),
+      h, m, 0, 0
+    ));
   }
   return null;
 }

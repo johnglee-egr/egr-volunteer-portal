@@ -225,7 +225,7 @@ ${subtitleLines.length ? `<div class="subtitle">${subtitleLines.map(esc).join(" 
   <thead><tr>${headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
   <tbody>${rows.map((r) => `<tr>${headers.map((h) => `<td>${esc(r[h])}</td>`).join("")}</tr>`).join("")}</tbody>
 </table>
-<div class="footer">Generated ${new Date().toLocaleString()} • Harvest Festival Volunteers</div>
+<div class="footer">Generated ${new Date().toLocaleString()} • EGR Harvest + Beer Festival Volunteers</div>
 </body></html>`;
 
   return new NextResponse(html, {

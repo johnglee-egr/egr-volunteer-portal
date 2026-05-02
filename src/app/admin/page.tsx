@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback, FormEvent } from "react";
 import TimeInput from "@/components/TimeInput";
 import NotificationsPanel from "./NotificationsPanel";
+import { fmt12, fmtPhoneInput, formatPhone } from "@/lib/formatters";
 
 interface Volunteer {
   id: string;
@@ -120,8 +121,9 @@ export default function AdminDashboard() {
   const [success, setSuccess] = useState("");
 
   // Confirmation dialog
-  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
-  const showConfirm = (message: string, action: () => void) => setConfirmDialog({ message, onConfirm: action });
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void; confirmLabel: string } | null>(null);
+  const showConfirm = (message: string, action: () => void, confirmLabel = "Yes, Send") =>
+    setConfirmDialog({ message, onConfirm: action, confirmLabel });
 
   // Forms
   const [showCategoryForm, setShowCategoryForm] = useState(false);
@@ -137,33 +139,7 @@ export default function AdminDashboard() {
   // Team member expand/collapse (Volunteers tab)
   const [expandedTeamIds, setExpandedTeamIds] = useState<Set<string>>(new Set());
 
-  // Format phone input as xxx-xxx-xxxx while typing
-  const fmtPhoneInput = (v: string) => {
-    const d = v.replace(/\D/g, "").slice(0, 10);
-    if (d.length <= 3) return d;
-    if (d.length <= 6) return `${d.slice(0, 3)}-${d.slice(3)}`;
-    return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
-  };
-
-  // Format phone number as (xxx) xxx-xxxx
-  const formatPhone = (phone: string) => {
-    const digits = phone.replace(/\D/g, '');
-    const d = digits.startsWith('1') && digits.length === 11 ? digits.slice(1) : digits;
-    if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
-    return phone;
-  };
-
-  // Format 24h time string (HH:MM) to 12h (h:MM AM/PM)
-  const fmt12 = (t: string) => {
-    if (!t) return "";
-    const [hStr, mStr] = t.split(":");
-    let h = parseInt(hStr);
-    const m = mStr || "00";
-    const ampm = h >= 12 ? "PM" : "AM";
-    if (h === 0) h = 12;
-    else if (h > 12) h -= 12;
-    return `${h}:${m} ${ampm}`;
-  };
+  // fmt12, fmtPhoneInput, formatPhone imported from @/lib/formatters
 
   // Category form — wizard steps
   const [catName, setCatName] = useState("");
@@ -278,8 +254,6 @@ export default function AdminDashboard() {
 
   // Edit category — reuses the same wizard fields, just with editingCatId set
   const [editingCatId, setEditingCatId] = useState<string | null>(null);
-  const [editCatName, setEditCatName] = useState("");
-  const [editCatDesc, setEditCatDesc] = useState("");
 
   const startEditCategory = (cat: Category) => {
     const catShifts = shifts.filter((s) => s.categoryId === cat.id)
@@ -667,14 +641,26 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleDeleteShift = async (id: string) => {
-    clearMessages();
-    await fetch("/api/shifts", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
-    });
-    loadData();
+  const handleDeleteShift = (id: string) => {
+    const shiftTitle = shifts.find((s) => s.id === id)?.title ?? "this shift";
+    showConfirm(
+      `Delete "${shiftTitle}"? All volunteer assignments for this shift will be removed.`,
+      async () => {
+        clearMessages();
+        const res = await fetch("/api/shifts", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id }),
+        });
+        if (res.ok) {
+          loadData();
+        } else {
+          const data = await res.json();
+          setError(data.error || "Failed to delete shift.");
+        }
+      },
+      "Yes, Delete"
+    );
   };
 
   // Volunteer CRUD
@@ -773,7 +759,7 @@ export default function AdminDashboard() {
       const res = await fetch("/api/pair-requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requesterId: newlyCreatedVol.id, partnerName: partner.name, autoApprove: true }),
+        body: JSON.stringify({ requesterId: newlyCreatedVol.id, partnerId, autoApprove: true }),
       });
       if (res.ok) {
         setSuccess(`${newlyCreatedVol.name} paired with ${partner.name}!`);
@@ -788,21 +774,26 @@ export default function AdminDashboard() {
     resetPostCreatePanel();
   };
 
-  const handleDeleteVolunteer = async (v: Volunteer) => {
-    if (!confirm(`Delete ${v.name}? This will remove all their assignments, pair requests, and team memberships. This cannot be undone.`)) return;
-    clearMessages();
-    const res = await fetch("/api/volunteers", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: v.id }),
-    });
-    if (res.ok) {
-      setSuccess(`${v.name} has been deleted.`);
-      loadData();
-    } else {
-      const data = await res.json();
-      setError(data.error || "Failed to delete volunteer.");
-    }
+  const handleDeleteVolunteer = (v: Volunteer) => {
+    showConfirm(
+      `Delete ${v.name}? This will remove all their assignments, pair requests, and team memberships. This cannot be undone.`,
+      async () => {
+        clearMessages();
+        const res = await fetch("/api/volunteers", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: v.id }),
+        });
+        if (res.ok) {
+          setSuccess(`${v.name} has been deleted.`);
+          loadData();
+        } else {
+          const data = await res.json();
+          setError(data.error || "Failed to delete volunteer.");
+        }
+      },
+      "Yes, Delete"
+    );
   };
 
   // Assignment
@@ -1180,14 +1171,21 @@ export default function AdminDashboard() {
   };
 
   // Settings
+  const [settingsSaving, setSettingsSaving] = useState(false);
   const handleSaveSettings = async () => {
     clearMessages();
-    await fetch("/api/settings", {
+    setSettingsSaving(true);
+    const res = await fetch("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(settings),
     });
-    setSuccess("Settings saved!");
+    setSettingsSaving(false);
+    if (res.ok) {
+      setSuccess("Settings saved!");
+    } else {
+      setError("Failed to save settings. Please try again.");
+    }
   };
 
   // Reusable category wizard form (used for both new and inline edit)
@@ -1990,28 +1988,33 @@ export default function AdminDashboard() {
               </button>
               <span className="text-gray-300 text-sm">|</span>
               <button
-                onClick={async () => {
+                onClick={() => {
                   const names = Array.from(selectedVolIds)
                     .map((id) => volunteers.find((v: Volunteer) => v.id === id)?.name)
                     .filter(Boolean)
                     .join(", ");
-                  if (!confirm(`Permanently delete ${selectedVolIds.size} volunteer${selectedVolIds.size !== 1 ? "s" : ""}?\n\n${names}\n\nAll their assignments, pair requests, and team memberships will be removed. This cannot be undone.`)) return;
-                  clearMessages();
-                  let deleted = 0;
-                  let failed = 0;
-                  for (const id of Array.from(selectedVolIds)) {
-                    const res = await fetch("/api/volunteers", {
-                      method: "DELETE",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ id }),
-                    });
-                    if (res.ok) deleted++;
-                    else failed++;
-                  }
-                  setSelectedVolIds(new Set());
-                  if (failed === 0) setSuccess(`${deleted} volunteer${deleted !== 1 ? "s" : ""} deleted.`);
-                  else setError(`${deleted} deleted, ${failed} failed.`);
-                  loadData();
+                  showConfirm(
+                    `Permanently delete ${selectedVolIds.size} volunteer${selectedVolIds.size !== 1 ? "s" : ""}? (${names}) All assignments, pair requests, and team memberships will be removed.`,
+                    async () => {
+                      clearMessages();
+                      let deleted = 0;
+                      let failed = 0;
+                      for (const id of Array.from(selectedVolIds)) {
+                        const res = await fetch("/api/volunteers", {
+                          method: "DELETE",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ id }),
+                        });
+                        if (res.ok) deleted++;
+                        else failed++;
+                      }
+                      setSelectedVolIds(new Set());
+                      if (failed === 0) setSuccess(`${deleted} volunteer${deleted !== 1 ? "s" : ""} deleted.`);
+                      else setError(`${deleted} deleted, ${failed} failed.`);
+                      loadData();
+                    },
+                    "Yes, Delete"
+                  );
                 }}
                 className="bg-red-100 text-red-700 px-3 py-1.5 rounded text-sm font-medium hover:bg-red-200"
               >
@@ -2839,11 +2842,14 @@ export default function AdminDashboard() {
                       Assign Team
                     </button>
                     <button
-                      onClick={async () => {
-                        if (!confirm(`Delete team "${team.name}"? Members will remain as volunteers.`)) return;
-                        await fetch("/api/teams", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: team.id }) });
-                        loadData();
-                      }}
+                      onClick={() => showConfirm(
+                        `Delete team "${team.name}"? Members will remain as volunteers.`,
+                        async () => {
+                          await fetch("/api/teams", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: team.id }) });
+                          loadData();
+                        },
+                        "Yes, Delete"
+                      )}
                       className="bg-red-100 text-red-700 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-red-200"
                     >
                       Delete
@@ -2951,7 +2957,7 @@ export default function AdminDashboard() {
         <div>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-bold text-amber-900">Festival Settings</h2>
-            <button onClick={handleSaveSettings} className={btnPrimary}>Save Settings</button>
+            <button onClick={handleSaveSettings} disabled={settingsSaving} className={`${btnPrimary} disabled:opacity-50`}>{settingsSaving ? "Saving…" : "Save Settings"}</button>
           </div>
           <div className="bg-white rounded-xl border border-amber-200 p-6 space-y-4">
             <div className="grid sm:grid-cols-2 gap-4">
@@ -3006,7 +3012,7 @@ export default function AdminDashboard() {
                 }}
                 className="px-4 py-2 rounded-lg bg-amber-700 text-white text-sm font-semibold hover:bg-amber-800"
               >
-                Yes, Send
+                {confirmDialog.confirmLabel}
               </button>
             </div>
           </div>
