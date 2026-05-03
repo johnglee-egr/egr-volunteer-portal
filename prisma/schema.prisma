@@ -14,6 +14,8 @@ model Volunteer {
   phone            String?
   role             String                @default("volunteer") // volunteer, team_lead
   pendingRole      String?               // role awaiting admin approval e.g. "team_lead"
+  contactPref      String                @default("both") // both | email | sms
+  isOver21         Boolean?              // null = not answered, true = yes, false = no
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
   assignments      Assignment[]
@@ -34,6 +36,7 @@ model Category {
   type            String   @default("throughout") // "one-time" or "throughout"
   stationCount    Int      @default(1)
   volsPerStation  Int      @default(1)
+  requiresOver21  Boolean  @default(false)
   createdAt       DateTime @default(now())
   shifts          Shift[]
 }
@@ -157,7 +160,7 @@ model NotificationSchedule {
   relativeTime  String?              // "HH:MM" time of day to send
   sendAt        DateTime?            // absolute datetime (for fixed type)
   isAutomatic   Boolean              @default(false)
-  status        String               @default("pending") // pending | sent | cancelled
+  status        String               @default("pending") // pending | sent | cancelled | failed
   lastRunAt     DateTime?
   createdAt     DateTime             @default(now())
 }

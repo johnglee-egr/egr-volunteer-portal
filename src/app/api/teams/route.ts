@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 
 const teamInclude = {
   leader: true,
@@ -26,6 +27,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   try {
     const { name, leaderId, memberNames } = await req.json();
 
@@ -41,8 +43,14 @@ export async function POST(req: NextRequest) {
         // Check if volunteer already exists by name
         let vol = await prisma.volunteer.findFirst({ where: { name: m.name.trim() } });
         if (!vol) {
+          const memberIsOver21 = m.isOver21 === true ? true : m.isOver21 === false ? false : null;
           vol = await prisma.volunteer.create({
-            data: { name: m.name.trim(), email: m.email || null, phone: m.phone || null },
+            data: {
+              name: m.name.trim(),
+              email: m.email || null,
+              phone: m.phone || null,
+              isOver21: memberIsOver21,
+            },
           });
         }
         memberVolunteerIds.push(vol.id);
@@ -71,6 +79,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   try {
     const { id, name, addMembers, removeMembers, assignShiftId, assignCategoryId } = await req.json();
 
@@ -84,8 +93,14 @@ export async function PUT(req: NextRequest) {
       for (const m of addMembers) {
         let vol = await prisma.volunteer.findFirst({ where: { name: m.name?.trim() } });
         if (!vol) {
+          const addIsOver21 = m.isOver21 === true ? true : m.isOver21 === false ? false : null;
           vol = await prisma.volunteer.create({
-            data: { name: m.name.trim(), email: m.email || null, phone: m.phone || null },
+            data: {
+              name: m.name.trim(),
+              email: m.email || null,
+              phone: m.phone || null,
+              isOver21: addIsOver21,
+            },
           });
         }
         // Add to team (ignore if already member)
@@ -171,6 +186,7 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   try {
     const { id } = await req.json();
     await prisma.team.delete({ where: { id } });

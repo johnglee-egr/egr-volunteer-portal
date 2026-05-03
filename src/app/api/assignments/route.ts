@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
   const status = req.nextUrl.searchParams.get("status");
@@ -35,6 +36,17 @@ export async function POST(req: NextRequest) {
   // Only enforce capacity for volunteer self-signup — admin can always over-assign
   if (assignedBy !== "admin" && shift.assignments.length >= shift.capacity) {
     return NextResponse.json({ error: "This shift is full" }, { status: 400 });
+  }
+
+  // 21+ age check: if the category requires it, verify the volunteer confirmed they are 21+
+  if (shift.category.requiresOver21) {
+    const volunteer = await prisma.volunteer.findUnique({ where: { id: volunteerId } });
+    if (!volunteer || volunteer.isOver21 !== true) {
+      return NextResponse.json(
+        { error: "This shift requires volunteers to be 21 or older. Please confirm your age when registering." },
+        { status: 400 }
+      );
+    }
   }
 
   // Check for duplicate
@@ -153,6 +165,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   const { assignmentId, status, stationIndex } = await req.json();
 
   // Allow updating just stationIndex without status change
@@ -181,6 +194,8 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  // Self-removal by volunteers is allowed; admin deletions also pass through here.
+  // No requireAdmin — volunteers can remove themselves from their own shifts.
   const { assignmentId, volunteerId, shiftId } = await req.json();
 
   if (assignmentId) {

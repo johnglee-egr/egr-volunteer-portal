@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { toCSV, fmt12, formatPhone } from "@/lib/csv";
+import { requireAdmin } from "@/lib/auth";
 
 // GET /api/export?type=master|shift|volunteer|coverage&format=csv|html
 //   shift requires shiftId, volunteer requires volunteerId
 export async function GET(req: NextRequest) {
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   const type = req.nextUrl.searchParams.get("type") || "master";
   const format = req.nextUrl.searchParams.get("format") || "csv";
   const shiftId = req.nextUrl.searchParams.get("shiftId") || undefined;

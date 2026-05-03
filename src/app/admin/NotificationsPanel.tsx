@@ -340,21 +340,19 @@ export default function NotificationsPanel({
       );
     }
     if (groupType === "timerange") {
+      // groupValue format: "HH:MM-HH:MM" — use regex to avoid splitting on colons
+      const trMatch = /^(\d{2}:\d{2})-(\d{2}:\d{2})$/.exec(groupValue);
+      const trStart = trMatch ? trMatch[1] : "";
+      const trEnd   = trMatch ? trMatch[2] : "";
       return (
         <div className="flex items-center gap-2">
           <input type="time" placeholder="Start" className={inputClass}
-            value={groupValue.split("-")[0] || ""}
-            onChange={(e) => {
-              const [, end = ""] = groupValue.split("-");
-              setGroupValue(`${e.target.value}-${end}`);
-            }} />
+            value={trStart}
+            onChange={(e) => setGroupValue(`${e.target.value}-${trEnd}`)} />
           <span className="text-gray-500">to</span>
           <input type="time" placeholder="End" className={inputClass}
-            value={groupValue.split("-")[1] || ""}
-            onChange={(e) => {
-              const [start = ""] = groupValue.split("-");
-              setGroupValue(`${start}-${e.target.value}`);
-            }} />
+            value={trEnd}
+            onChange={(e) => setGroupValue(`${trStart}-${e.target.value}`)} />
         </div>
       );
     }

@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { timingSafeEqual } from "crypto";
 
 const ADMIN_COOKIE = "harvest_admin_session";
 
@@ -13,7 +14,10 @@ export function verifyPassword(password: string): boolean {
     console.error("[auth] ADMIN_PASSWORD env var is not set — login will always fail.");
     return false;
   }
-  return password === adminPassword;
+  // Use constant-time comparison to prevent timing attacks
+  const a = Buffer.from(password);
+  const b = Buffer.from(adminPassword);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 /** Call at the top of any admin-only API route handler. Returns a 401 response if not authenticated. */

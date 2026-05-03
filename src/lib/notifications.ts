@@ -1,10 +1,48 @@
 import nodemailer from "nodemailer";
 import { prisma } from "./db";
 import { fmt12 } from "./formatters";
+import { buildShiftEvent, buildGoogleCalendarUrl, generateICS } from "./ics";
 
 // ── Low-level send functions ─────────────────────────────────────────────────
 
-export async function sendEmail(to: string, subject: string, message: string) {
+interface EmailCalendarOptions {
+  /** Raw ICS file content to attach */
+  icsContent?: string;
+  /** Google Calendar deep-link to embed as a button */
+  googleCalUrl?: string;
+  /** Direct .ics download URL to embed as a button (for non-Google clients) */
+  icsUrl?: string;
+}
+
+function buildEmailHTML(textBody: string, cal?: EmailCalendarOptions): string {
+  const baseHtml = textBody.replace(/\n/g, "<br>");
+  if (!cal?.googleCalUrl && !cal?.icsUrl) return baseHtml;
+
+  const btnStyle =
+    "display:inline-block;padding:10px 18px;border-radius:6px;font-size:14px;font-weight:600;text-decoration:none;color:#ffffff;";
+
+  const googleBtn = cal.googleCalUrl
+    ? `<a href="${cal.googleCalUrl}" style="${btnStyle}background:#4285f4;">&#x1F4C5; Add to Google Calendar</a>`
+    : "";
+
+  const icsBtn = cal.icsUrl
+    ? `<a href="${cal.icsUrl}" style="${btnStyle}background:#6c757d;margin-left:8px;">&#x1F4C5; Download (.ics)</a>`
+    : "";
+
+  return `${baseHtml}
+<br><br>
+<div style="margin-top:8px;padding:16px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;display:inline-block;">
+  <p style="margin:0 0 10px 0;font-size:14px;color:#92400e;font-weight:600;">📅 Add your shift to your calendar</p>
+  <div>${googleBtn}${icsBtn}</div>
+</div>`;
+}
+
+export async function sendEmail(
+  to: string,
+  subject: string,
+  message: string,
+  cal?: EmailCalendarOptions
+) {
   const host = process.env.SMTP_HOST;
   if (!host) {
     console.log(`[EMAIL MOCK] To: ${to}, Subject: ${subject}`);
@@ -26,7 +64,18 @@ export async function sendEmail(to: string, subject: string, message: string) {
       to,
       subject,
       text: message,
-      html: message.replace(/\n/g, "<br>"),
+      html: buildEmailHTML(message, cal),
+      ...(cal?.icsContent
+        ? {
+            attachments: [
+              {
+                filename: "volunteer-shift.ics",
+                content: cal.icsContent,
+                contentType: "text/calendar; method=PUBLISH",
+              },
+            ],
+          }
+        : {}),
     });
     await prisma.notification.create({
       data: { type: "email", recipient: to, subject, message, status: "sent", sentAt: new Date() },
@@ -110,8 +159,10 @@ export function applyMerge(
 // ── Standard shift reminder (used by scheduler + manual shift buttons) ───────
 
 export async function sendReminder(
-  volunteer: { name: string; email?: string | null; phone?: string | null },
-  shift: { title: string; date: Date; startTime: string; endTime: string }
+  volunteer: { name: string; email?: string | null; phone?: string | null; contactPref?: string | null },
+  shift: { title: string; date: Date; startTime: string; endTime: string },
+  /** Assignment ID — enables calendar invite attachments + download links */
+  assignmentId?: string
 ) {
   // Try to use the "Shift Reminder" template from the database; fall back to a
   // sensible hardcoded default that uses the correct festival name.
@@ -133,9 +184,38 @@ export async function sendReminder(
 
   const message = applyMerge(templateBody, volunteer, shift);
 
+  // Determine which channels to use based on the volunteer's preference
+  const pref = volunteer.contactPref || "both";
+  const wantEmail = (pref === "both" || pref === "email") && !!volunteer.email;
+  const wantSMS   = (pref === "both" || pref === "sms")   && !!volunteer.phone;
+
+  // Build calendar helpers when we have an assignment ID
+  let cal: EmailCalendarOptions | undefined;
+  let smsCalLine = "";
+
+  if (assignmentId) {
+    const portalUrl = process.env.NEXT_PUBLIC_FESTIVAL_SITE_URL
+      ? `${process.env.NEXT_PUBLIC_FESTIVAL_SITE_URL}/volunteer`
+      : "https://volunteers.egrharvestfest.com/volunteer";
+
+    const event = buildShiftEvent(assignmentId, shift, volunteer.name, portalUrl);
+    const googleCalUrl = buildGoogleCalendarUrl(event);
+    const icsContent = generateICS(event);
+
+    const siteUrl = process.env.NEXT_PUBLIC_FESTIVAL_SITE_URL || "https://volunteers.egrharvestfest.com";
+    const icsUrl = `${siteUrl}/api/calendar/${assignmentId}`;
+
+    cal = { icsContent, googleCalUrl, icsUrl };
+    smsCalLine = `\n\n📅 Add to calendar: ${icsUrl}`;
+  }
+
   const results = [];
-  if (volunteer.email) results.push(await sendEmail(volunteer.email, templateSubject, message));
-  if (volunteer.phone) results.push(await sendSMS(volunteer.phone, message));
+  if (wantEmail) {
+    results.push(await sendEmail(volunteer.email!, templateSubject, message, cal));
+  }
+  if (wantSMS) {
+    results.push(await sendSMS(volunteer.phone!, message + smsCalLine));
+  }
   return results;
 }
 
@@ -229,8 +309,14 @@ export async function sendToGroup(templateId: string, groupType: string, groupVa
     const body = applyMerge(template.body, vol, shift);
     const subject = applyMerge(template.subject || "EGR Harvest + Beer Festival", vol, shift);
 
-    const canEmail = (template.channel === "email" || template.channel === "both") && !!vol.email;
-    const canSMS   = (template.channel === "sms"   || template.channel === "both") && !!vol.phone;
+    // Intersect template channel with the volunteer's own contact preference
+    const pref = (vol as { contactPref?: string | null }).contactPref || "both";
+    const canEmail = (template.channel === "email" || template.channel === "both")
+                  && (pref === "email" || pref === "both")
+                  && !!vol.email;
+    const canSMS   = (template.channel === "sms"   || template.channel === "both")
+                  && (pref === "sms"   || pref === "both")
+                  && !!vol.phone;
 
     if (!canEmail && !canSMS) continue; // no reachable contact — skip silently
     reachable++;

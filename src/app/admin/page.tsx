@@ -11,6 +11,7 @@ interface Volunteer {
   email?: string;
   phone?: string;
   role?: string;
+  isOver21?: boolean | null;
 }
 
 interface Assignment {
@@ -33,6 +34,7 @@ interface Category {
   type: string;
   stationCount: number;
   volsPerStation: number;
+  requiresOver21?: boolean;
   shifts?: { id: string }[];
 }
 
@@ -107,7 +109,7 @@ export default function AdminDashboard() {
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
   const [teamName, setTeamName] = useState("");
   const [teamLeaderId, setTeamLeaderId] = useState("");
-  const [teamNewMembers, setTeamNewMembers] = useState<{ name: string }[]>([{ name: "" }]);
+  const [teamNewMembers, setTeamNewMembers] = useState<{ name: string; isOver21: boolean | null }[]>([{ name: "", isOver21: null }]);
   const [assigningTeamId, setAssigningTeamId] = useState<string | null>(null);
   const [teamAssignMode, setTeamAssignMode] = useState<"shift" | "category">("shift");
   const [teamAssignTargetId, setTeamAssignTargetId] = useState("");
@@ -138,12 +140,15 @@ export default function AdminDashboard() {
   const [bulkAssignShiftId, setBulkAssignShiftId] = useState<string>("");
   // Team member expand/collapse (Volunteers tab)
   const [expandedTeamIds, setExpandedTeamIds] = useState<Set<string>>(new Set());
+  // Volunteer search (Volunteers tab)
+  const [volSearch, setVolSearch] = useState("");
 
   // fmt12, fmtPhoneInput, formatPhone imported from @/lib/formatters
 
   // Category form — wizard steps
   const [catName, setCatName] = useState("");
   const [catDesc, setCatDesc] = useState("");
+  const [catRequiresOver21, setCatRequiresOver21] = useState(false);
   const [catType, setCatType] = useState<"one-time" | "throughout" | "">(""); // step 2
   // One-time fields
   const [catOneTimeCount, setCatOneTimeCount] = useState("5");
@@ -161,7 +166,7 @@ export default function AdminDashboard() {
   const [catStep, setCatStep] = useState(1);
 
   const resetCategoryForm = () => {
-    setCatName(""); setCatDesc(""); setCatType(""); setCatStep(1);
+    setCatName(""); setCatDesc(""); setCatRequiresOver21(false); setCatType(""); setCatStep(1);
     setCatOneTimeCount("5"); setCatOneTimeStart(""); setCatOneTimeEnd("");
     setCatShiftCount("3"); setCatStationCount("1"); setCatVolsPerStation("2");
     setCatShiftBlocks([]); setEditingBlockIndex(null); setEditingBlockField(null);
@@ -262,6 +267,7 @@ export default function AdminDashboard() {
     // Pre-populate wizard fields from saved metadata
     setCatName(cat.name);
     setCatDesc(cat.description || "");
+    setCatRequiresOver21(cat.requiresOver21 ?? false);
     setCatType(cat.type === "one-time" ? "one-time" : "throughout");
     if (cat.type === "one-time" && catShifts.length === 1) {
       setCatOneTimeCount(String(catShifts[0].capacity));
@@ -295,6 +301,7 @@ export default function AdminDashboard() {
   const [volName, setVolName] = useState("");
   const [volEmail, setVolEmail] = useState("");
   const [volPhone, setVolPhone] = useState("");
+  const [volIsOver21, setVolIsOver21] = useState<boolean | null>(null);
 
   // Post-create assignment panel
   const [newlyCreatedVol, setNewlyCreatedVol] = useState<{ id: string; name: string } | null>(null);
@@ -427,6 +434,7 @@ export default function AdminDashboard() {
         type: catType || "throughout",
         stationCount: catType === "throughout" ? parseInt(catStationCount) || 1 : 1,
         volsPerStation: catType === "throughout" ? parseInt(catVolsPerStation) || 1 : parseInt(catOneTimeCount) || 1,
+        requiresOver21: catRequiresOver21,
       }),
     });
     if (!res.ok) {
@@ -509,6 +517,7 @@ export default function AdminDashboard() {
         type: catType || "throughout",
         stationCount: catType === "throughout" ? parseInt(catStationCount) || 1 : 1,
         volsPerStation: catType === "throughout" ? parseInt(catVolsPerStation) || 1 : parseInt(catOneTimeCount) || 1,
+        requiresOver21: catRequiresOver21,
       }),
     });
     if (!res.ok) {
@@ -674,7 +683,7 @@ export default function AdminDashboard() {
     const res = await fetch("/api/volunteers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: volName, email: volEmail || null, phone: volPhone }),
+      body: JSON.stringify({ name: volName, email: volEmail || null, phone: volPhone, isOver21: volIsOver21 }),
     });
     if (res.ok) {
       const created = await res.json();
@@ -684,7 +693,7 @@ export default function AdminDashboard() {
       setPostCreateMode("none");
       setPostCreateTeamId("");
       setPostCreatePairWithId("");
-      setVolName(""); setVolEmail(""); setVolPhone("");
+      setVolName(""); setVolEmail(""); setVolPhone(""); setVolIsOver21(null);
       loadData();
     } else {
       const data = await res.json();
@@ -1240,6 +1249,30 @@ export default function AdminDashboard() {
               </button>
             </div>
           </div>
+          {/* 21+ requirement */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">🍺 Does this role require volunteers to be 21 or older?</label>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setCatRequiresOver21(true)}
+                className={`px-4 py-2 rounded-lg border-2 text-sm font-medium transition-all ${catRequiresOver21 ? "border-amber-500 bg-amber-50 text-amber-900" : "border-gray-200 text-gray-600 hover:border-gray-300"}`}
+              >
+                Yes — must be 21+
+              </button>
+              <button
+                type="button"
+                onClick={() => setCatRequiresOver21(false)}
+                className={`px-4 py-2 rounded-lg border-2 text-sm font-medium transition-all ${!catRequiresOver21 ? "border-green-500 bg-green-50 text-green-900" : "border-gray-200 text-gray-600 hover:border-gray-300"}`}
+              >
+                No — open to all ages
+              </button>
+            </div>
+            {catRequiresOver21 && (
+              <p className="text-xs text-amber-700 mt-1">Volunteers must confirm they are 21+ to sign up for shifts in this category.</p>
+            )}
+          </div>
+
           <div className="flex justify-end">
             <button type="button" onClick={() => {
               if (!catName) { setError("Category name is required."); return; }
@@ -1353,6 +1386,7 @@ export default function AdminDashboard() {
           <div className="bg-gray-50 rounded-lg p-4 space-y-2 text-sm">
             <div className="flex justify-between"><span className="text-gray-500">Category:</span><span className="font-bold text-amber-900">{catName}</span></div>
             {catDesc && (<div className="flex justify-between"><span className="text-gray-500">Description:</span><span className="text-gray-700">{catDesc}</span></div>)}
+            <div className="flex justify-between"><span className="text-gray-500">Requires 21+:</span><span className={catRequiresOver21 ? "font-bold text-amber-700" : "text-gray-500"}>{catRequiresOver21 ? "🍺 Yes — must be 21+" : "No — open to all ages"}</span></div>
             <div className="flex justify-between"><span className="text-gray-500">Type:</span><span className="font-medium">{catType === "one-time" ? "One-Time" : "Throughout Festival"}</span></div>
             {catType === "one-time" && (
               <>
@@ -1532,6 +1566,9 @@ export default function AdminDashboard() {
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-gray-400 font-mono w-5">{index + 1}.</span>
                             <h3 className="font-bold text-amber-900 text-lg">{cat.name}</h3>
+                            {cat.requiresOver21 && (
+                              <span className="bg-amber-100 text-amber-800 text-xs font-bold px-2 py-0.5 rounded-full">🍺 21+</span>
+                            )}
                             {/* Assigned / Total */}
                             <span className={`text-sm font-medium ml-1 ${
                               totalAssigned >= totalNeeded && totalNeeded > 0 ? "text-green-600" : "text-gray-500"
@@ -1596,7 +1633,7 @@ export default function AdminDashboard() {
                         >
                           Edit
                         </button>
-                        <button onClick={(e) => { e.stopPropagation(); handleDeleteCategory(cat.id); }} className={btnDanger}>
+                        <button onClick={(e) => { e.stopPropagation(); showConfirm(`Delete category "${cat.name}"? This will also delete all its shifts and assignments.`, () => handleDeleteCategory(cat.id), "Yes, Delete"); }} className={btnDanger}>
                           Delete
                         </button>
                       </div>
@@ -2045,6 +2082,21 @@ export default function AdminDashboard() {
                   <input type="email" value={volEmail} onChange={(e) => setVolEmail(e.target.value)} className={inputClass} />
                 </div>
               </div>
+              {/* 21+ verification */}
+              <div className="flex items-center gap-4">
+                <span className="text-sm font-medium text-gray-700">🍺 21 or older?</span>
+                <label className={`flex items-center gap-1.5 cursor-pointer px-3 py-1.5 rounded-lg border transition-colors text-sm ${volIsOver21 === true ? "border-amber-500 bg-amber-50 text-amber-900 font-medium" : "border-gray-200 text-gray-600 hover:border-amber-300"}`}>
+                  <input type="radio" name="volIsOver21" checked={volIsOver21 === true} onChange={() => setVolIsOver21(true)} className="accent-amber-600" />
+                  Yes
+                </label>
+                <label className={`flex items-center gap-1.5 cursor-pointer px-3 py-1.5 rounded-lg border transition-colors text-sm ${volIsOver21 === false ? "border-gray-400 bg-gray-50 text-gray-700 font-medium" : "border-gray-200 text-gray-600 hover:border-gray-300"}`}>
+                  <input type="radio" name="volIsOver21" checked={volIsOver21 === false} onChange={() => setVolIsOver21(false)} className="accent-gray-500" />
+                  No
+                </label>
+                {volIsOver21 !== null && (
+                  <button type="button" onClick={() => setVolIsOver21(null)} className="text-xs text-gray-400 hover:text-gray-600">Clear</button>
+                )}
+              </div>
               <button type="submit" className={btnPrimary}>Add Volunteer</button>
             </form>
           )}
@@ -2144,21 +2196,79 @@ export default function AdminDashboard() {
             </div>
           )}
 
+          {/* Volunteer search bar */}
+          <div className="relative">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1 max-w-sm">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
+                <input
+                  type="text"
+                  value={volSearch}
+                  onChange={(e) => setVolSearch(e.target.value)}
+                  placeholder="Search by name or assignment…"
+                  className="w-full pl-9 pr-4 py-2 text-sm border border-amber-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-amber-300 focus:border-amber-400 placeholder-gray-400"
+                />
+              </div>
+              {volSearch && (
+                <button
+                  onClick={() => setVolSearch("")}
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors font-medium"
+                >
+                  <span className="text-base leading-none">✕</span>
+                  Back to full list
+                </button>
+              )}
+              {volSearch && (() => {
+                const q = volSearch.toLowerCase().trim();
+                const count = (volunteers as (Volunteer & { assignments?: Assignment[] })[]).filter((v) => {
+                  if (v.name.toLowerCase().includes(q)) return true;
+                  return (v.assignments || []).some((a) => {
+                    if (a.shift?.title.toLowerCase().includes(q)) return true;
+                    const cat = categories.find((c: Category) => c.id === a.shift?.categoryId);
+                    return cat ? cat.name.toLowerCase().includes(q) : false;
+                  });
+                }).length;
+                return (
+                  <span className="text-sm text-gray-500">
+                    {count === 0 ? "No matches" : `${count} volunteer${count !== 1 ? "s" : ""} found`}
+                  </span>
+                );
+              })()}
+            </div>
+          </div>
+
           <div className="bg-white rounded-lg border border-amber-100 overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="bg-amber-50">
+              {volunteers.length > 0 && <thead className="bg-amber-50">
                 <tr>
                   <th className="px-3 py-3 w-8">
-                    <input
-                      type="checkbox"
-                      checked={volunteers.length > 0 && selectedVolIds.size === volunteers.length}
-                      onChange={(e) => {
-                        if (e.target.checked) setSelectedVolIds(new Set(volunteers.map((v: Volunteer) => v.id)));
-                        else setSelectedVolIds(new Set());
-                      }}
-                      className="w-4 h-4 cursor-pointer"
-                      title="Select all"
-                    />
+                    {(() => {
+                      const shown = volSearch
+                        ? (volunteers as (Volunteer & { assignments?: Assignment[] })[]).filter((v) => {
+                            const q = volSearch.toLowerCase().trim();
+                            if (v.name.toLowerCase().includes(q)) return true;
+                            return (v.assignments || []).some((a) => {
+                              if (a.shift?.title.toLowerCase().includes(q)) return true;
+                              const cat = categories.find((c: Category) => c.id === a.shift?.categoryId);
+                              return cat ? cat.name.toLowerCase().includes(q) : false;
+                            });
+                          })
+                        : volunteers;
+                      return (
+                        <input
+                          type="checkbox"
+                          checked={shown.length > 0 && shown.every((v) => selectedVolIds.has(v.id))}
+                          onChange={(e) => {
+                            const next = new Set(selectedVolIds);
+                            if (e.target.checked) shown.forEach((v) => next.add(v.id));
+                            else shown.forEach((v) => next.delete(v.id));
+                            setSelectedVolIds(next);
+                          }}
+                          className="w-4 h-4 cursor-pointer"
+                          title="Select all"
+                        />
+                      );
+                    })()}
                   </th>
                   <th className="text-left px-4 py-3 font-medium text-amber-900">Name</th>
                   <th className="text-left px-4 py-3 font-medium text-amber-900">Status</th>
@@ -2167,13 +2277,144 @@ export default function AdminDashboard() {
                   <th className="text-left px-4 py-3 font-medium text-amber-900">Assignments</th>
                   <th className="text-left px-4 py-3 font-medium text-amber-900">Actions</th>
                 </tr>
-              </thead>
+              </thead>}
               <tbody>
                 {(() => {
-                  // Build ordered list: teams/groups first (lead + expanded members), then standalones.
-                  // Groups are legacy data (created before Teams replaced Groups UI) — both are
-                  // processed here so existing group structures still collapse correctly.
                   type RichVol = Volunteer & { assignments?: Assignment[]; _teamId?: string; _memberCount?: number; _indent?: boolean };
+
+                  // ── Search mode: flat filtered list ──────────────────────────
+                  if (volSearch.trim()) {
+                    const q = volSearch.toLowerCase().trim();
+                    const filtered = (volunteers as RichVol[]).filter((v) => {
+                      if (v.name.toLowerCase().includes(q)) return true;
+                      return (v.assignments || []).some((a) => {
+                        if (a.shift?.title.toLowerCase().includes(q)) return true;
+                        const cat = categories.find((c: Category) => c.id === a.shift?.categoryId);
+                        return cat ? cat.name.toLowerCase().includes(q) : false;
+                      });
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={7} className="text-center py-10 text-gray-400">
+                            No volunteers match &ldquo;{volSearch}&rdquo;
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return filtered.map((v) => (
+                      <tr key={v.id} className={`border-t border-amber-50 hover:bg-amber-50/50 ${selectedVolIds.has(v.id) ? "bg-amber-50/70" : ""}`}>
+                        <td className="px-3 py-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedVolIds.has(v.id)}
+                            onChange={(e) => {
+                              const next = new Set(selectedVolIds);
+                              if (e.target.checked) next.add(v.id);
+                              else next.delete(v.id);
+                              setSelectedVolIds(next);
+                            }}
+                            className="w-4 h-4 cursor-pointer"
+                          />
+                        </td>
+                        <td className="px-4 py-3 font-medium">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="w-4 flex-shrink-0" />
+                            <span>{v.name}</span>
+                            {v.isOver21 === true && <span className="text-xs bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full font-semibold">21+</span>}
+                            {v.isOver21 === false && <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">under 21</span>}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {(() => {
+                            if (v.role === "team_lead") {
+                              const ledTeam = teams.find((t: Team) => t.leader.id === v.id);
+                              return (
+                                <span className="inline-flex items-center gap-1 bg-teal-100 text-teal-800 text-xs px-2 py-0.5 rounded-full font-medium">
+                                  👑 Team Lead{ledTeam ? ` — ${ledTeam.name}` : ""}
+                                </span>
+                              );
+                            }
+                            const memberTeam = teams.find((t: Team) => t.members.some((m: TeamMemberWithVol) => m.volunteer.id === v.id));
+                            if (memberTeam) {
+                              return (
+                                <span className="inline-flex items-center gap-1 bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded-full font-medium">
+                                  👥 {memberTeam.name} — lead: {memberTeam.leader.name}
+                                </span>
+                              );
+                            }
+                            const partnerIds = getApprovedPartnerIds(v.id);
+                            if (partnerIds.length > 0) {
+                              const partnerNames = partnerIds.map((pid) => volunteers.find((vol: Volunteer) => vol.id === pid)?.name || "Unknown").join(", ");
+                              return (
+                                <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-800 text-xs px-2 py-0.5 rounded-full font-medium">
+                                  🔗 Partnered w/ {partnerNames}
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded-full">
+                                🙋 Individual
+                              </span>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-4 py-3 text-gray-600 w-48 max-w-[12rem] truncate">{v.email || "-"}</td>
+                        <td className="px-4 py-3 text-gray-600 w-36 max-w-[9rem]">{v.phone ? formatPhone(v.phone) : "-"}</td>
+                        <td className="px-4 py-3">
+                          {(() => {
+                            const assignments = v.assignments || [];
+                            if (assignments.length === 0) return <span className="text-gray-400">None</span>;
+                            return (
+                              <div className="flex flex-wrap gap-1">
+                                {assignments.map((a) => (
+                                  <span key={a.id} className="inline-block bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full whitespace-nowrap">
+                                    {a.shift?.title || "Unknown shift"}
+                                  </span>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setManagingAssignmentsFor(v as Volunteer & { assignments?: Assignment[] })}
+                              className="bg-amber-100 text-amber-700 px-3 py-1 rounded text-xs font-medium hover:bg-amber-200"
+                            >
+                              Change Assignments
+                            </button>
+                            <button
+                              onClick={() => showConfirm(`Ready to send a reminder to ${v.name}?`, () => doSendVolunteerReminder(v.id, v.name))}
+                              className="bg-blue-100 text-blue-700 px-3 py-1 rounded text-xs font-medium hover:bg-blue-200"
+                            >
+                              Send Reminder
+                            </button>
+                            <a
+                              href={`/api/export?type=volunteer&volunteerId=${v.id}&format=html`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200"
+                              title="Print this volunteer's schedule"
+                            >
+                              🖨 Schedule
+                            </a>
+                            <button
+                              onClick={() => handleDeleteVolunteer(v)}
+                              className="bg-red-100 text-red-700 px-3 py-1 rounded text-xs font-medium hover:bg-red-200"
+                              title="Permanently delete this volunteer"
+                            >
+                              🗑 Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ));
+                  }
+
+                  // ── Normal mode: ordered list (teams first, then standalones) ─
                   const ordered: RichVol[] = [];
                   const seen = new Set<string>();
 
@@ -2254,6 +2495,8 @@ export default function AdminDashboard() {
                             <span className="w-4 flex-shrink-0" />
                           )}
                           <span>{v.name}</span>
+                          {v.isOver21 === true && <span className="text-xs bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full font-semibold">21+</span>}
+                          {v.isOver21 === false && <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">under 21</span>}
                           {v._teamId != null && !expandedTeamIds.has(v._teamId) && (v._memberCount ?? 0) > 0 && (
                             <span className="text-gray-400 text-xs ml-0.5">+{v._memberCount}</span>
                           )}
@@ -2348,7 +2591,11 @@ export default function AdminDashboard() {
               </tbody>
             </table>
             {volunteers.length === 0 && (
-              <p className="text-gray-500 text-center py-8">No volunteers yet.</p>
+              <tbody>
+                <tr>
+                  <td colSpan={7} className="text-gray-500 text-center py-10">No volunteers yet.</td>
+                </tr>
+              </tbody>
             )}
           </div>
         </div>
@@ -2715,7 +2962,7 @@ export default function AdminDashboard() {
         <div>
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-bold text-amber-900">Manage Teams</h2>
-            <button onClick={() => { setShowTeamForm(!showTeamForm); setEditingTeamId(null); setTeamName(""); setTeamLeaderId(""); setTeamNewMembers([{ name: "" }]); }} className={btnPrimary}>
+            <button onClick={() => { setShowTeamForm(!showTeamForm); setEditingTeamId(null); setTeamName(""); setTeamLeaderId(""); setTeamNewMembers([{ name: "", isOver21: null }]); }} className={btnPrimary}>
               {showTeamForm ? "Cancel" : "+ Create Team"}
             </button>
           </div>
@@ -2747,19 +2994,29 @@ export default function AdminDashboard() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Team Members</label>
                 {teamNewMembers.map((m, i) => (
-                  <div key={i} className="flex gap-2 mb-2">
+                  <div key={i} className="flex flex-wrap items-center gap-2 mb-2">
                     <input
                       value={m.name}
-                      onChange={(e) => { const updated = [...teamNewMembers]; updated[i] = { name: e.target.value }; setTeamNewMembers(updated); }}
-                      className={inputClass + " flex-1"}
+                      onChange={(e) => { const updated = [...teamNewMembers]; updated[i] = { ...updated[i], name: e.target.value }; setTeamNewMembers(updated); }}
+                      className={inputClass + " flex-1 min-w-[140px]"}
                       placeholder={`Member ${i + 1} name`}
                     />
+                    <label className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={m.isOver21 === true}
+                        onChange={(e) => { const updated = [...teamNewMembers]; updated[i] = { ...updated[i], isOver21: e.target.checked ? true : null }; setTeamNewMembers(updated); }}
+                        className="w-3.5 h-3.5 accent-amber-600"
+                      />
+                      21+
+                    </label>
                     {teamNewMembers.length > 1 && (
                       <button onClick={() => setTeamNewMembers(teamNewMembers.filter((_, j) => j !== i))} className="text-red-500 hover:text-red-700 text-sm px-2">Remove</button>
                     )}
                   </div>
                 ))}
-                <button onClick={() => setTeamNewMembers([...teamNewMembers, { name: "" }])} className="text-teal-700 text-sm font-medium hover:text-teal-900">+ Add Another Member</button>
+                <p className="text-xs text-gray-400 mb-1">Check &ldquo;21+&rdquo; for members who are 21 or older (required for pouring roles).</p>
+                <button onClick={() => setTeamNewMembers([...teamNewMembers, { name: "", isOver21: null }])} className="text-teal-700 text-sm font-medium hover:text-teal-900">+ Add Another Member</button>
               </div>
 
               <button
@@ -2798,7 +3055,7 @@ export default function AdminDashboard() {
                   setEditingTeamId(null);
                   setTeamName("");
                   setTeamLeaderId("");
-                  setTeamNewMembers([{ name: "" }]);
+                  setTeamNewMembers([{ name: "", isOver21: null }]);
                   loadData();
                 }}
                 className="bg-teal-700 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-teal-800"
@@ -2828,7 +3085,7 @@ export default function AdminDashboard() {
                         setEditingTeamId(team.id);
                         setTeamName(team.name);
                         setTeamLeaderId(team.leader.id);
-                        setTeamNewMembers([{ name: "" }]);
+                        setTeamNewMembers([{ name: "", isOver21: null }]);
                         setShowTeamForm(true);
                       }}
                       className="bg-teal-100 text-teal-700 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-teal-200"
@@ -2869,7 +3126,7 @@ export default function AdminDashboard() {
                       <select value={teamAssignTargetId} onChange={(e) => setTeamAssignTargetId(e.target.value)} className={inputClass + " mb-3"}>
                         <option value="">Select shift...</option>
                         {shifts.map((s: Shift) => (
-                          <option key={s.id} value={s.id}>{s.title} ({s.startTime} - {s.endTime})</option>
+                          <option key={s.id} value={s.id}>{s.title} ({fmt12(s.startTime)} – {fmt12(s.endTime)})</option>
                         ))}
                       </select>
                     ) : (
@@ -2967,7 +3224,12 @@ export default function AdminDashboard() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Festival Date</label>
-                <input value={settings.festivalDate} onChange={(e) => setSettings({ ...settings, festivalDate: e.target.value })} className={inputClass} placeholder="October 18, 2026" />
+                <input
+                  type="date"
+                  value={settings.festivalDate ? new Date(settings.festivalDate).toISOString().split("T")[0] : ""}
+                  onChange={(e) => setSettings({ ...settings, festivalDate: e.target.value })}
+                  className={inputClass}
+                />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Festival Time</label>

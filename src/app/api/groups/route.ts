@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 
 const groupInclude = {
   leader: true,
@@ -62,6 +63,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   const { id, status } = await req.json();
 
   const group = await prisma.volunteerGroup.update({

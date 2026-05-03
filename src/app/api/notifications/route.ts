@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
   const { type, shiftId, volunteerId, customMessage, templateId, groupType, groupValue } = await req.json();
 
   if (type === "reminder" && shiftId) {
-    // Send reminders to all volunteers on a shift
+    // Send reminders to all volunteers on a shift (with calendar invite)
     const assignments = await prisma.assignment.findMany({
       where: { shiftId, status: "confirmed" },
       include: { volunteer: true, shift: true },
@@ -23,14 +23,14 @@ export async function POST(req: NextRequest) {
 
     const results = [];
     for (const assignment of assignments) {
-      const result = await sendReminder(assignment.volunteer, assignment.shift);
+      const result = await sendReminder(assignment.volunteer, assignment.shift, assignment.id);
       results.push({ volunteer: assignment.volunteer.name, result });
     }
     return NextResponse.json({ sent: results.length, results });
   }
 
   if (type === "reminder" && volunteerId) {
-    // Send reminders for all of a volunteer's shifts
+    // Send reminders for all of a volunteer's confirmed shifts (with calendar invites)
     const assignments = await prisma.assignment.findMany({
       where: { volunteerId, status: "confirmed" },
       include: { volunteer: true, shift: true },
@@ -38,21 +38,22 @@ export async function POST(req: NextRequest) {
 
     const results = [];
     for (const assignment of assignments) {
-      const result = await sendReminder(assignment.volunteer, assignment.shift);
+      const result = await sendReminder(assignment.volunteer, assignment.shift, assignment.id);
       results.push({ shift: assignment.shift.title, result });
     }
     return NextResponse.json({ sent: results.length, results });
   }
 
   if (type === "broadcast" && customMessage) {
-    // Send a custom message to all volunteers
+    // Send a custom message to all volunteers, respecting their contact preference
     const volunteers = await prisma.volunteer.findMany();
     const results = [];
     for (const v of volunteers) {
-      if (v.email) {
-        results.push(await sendEmail(v.email, "Harvest Beer Festival Update", customMessage));
+      const pref = v.contactPref || "both";
+      if ((pref === "email" || pref === "both") && v.email) {
+        results.push(await sendEmail(v.email, "EGR Harvest + Beer Festival Update", customMessage));
       }
-      if (v.phone) {
+      if ((pref === "sms" || pref === "both") && v.phone) {
         results.push(await sendSMS(v.phone, customMessage));
       }
     }

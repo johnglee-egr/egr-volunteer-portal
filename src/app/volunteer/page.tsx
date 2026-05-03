@@ -11,7 +11,7 @@ interface Shift {
   startTime: string;
   endTime: string;
   capacity: number;
-  category?: { id: string; name: string };
+  category?: { id: string; name: string; requiresOver21?: boolean };
   assignments: { id: string; volunteer: { id: string; name: string } }[];
 }
 
@@ -61,11 +61,21 @@ export default function VolunteerPortal() {
   const [phone, setPhone] = useState("");
   const [registerAsTeamLead, setRegisterAsTeamLead] = useState(false);
 
+  // Contact preference (shown during registration when both email + phone are provided)
+  const [contactPref, setContactPref] = useState<"both" | "email" | "sms">("both");
+
+  // 21+ age verification (required for certain shifts like pouring)
+  const [isOver21, setIsOver21] = useState<boolean | null>(null);
+
+  // Inline confirm state for "Remove Me" on confirmed shifts
+  const [removingAssignmentId, setRemovingAssignmentId] = useState<string | null>(null);
+
   // Pair request form
   const [showPairForm, setShowPairForm] = useState(false);
   const [partnerName, setPartnerName] = useState("");
   const [partnerEmail, setPartnerEmail] = useState("");
   const [partnerPhone, setPartnerPhone] = useState("");
+  const [partnerIsOver21, setPartnerIsOver21] = useState<boolean | null>(null);
   const [registerPartner, setRegisterPartner] = useState(false);
   const [pairMessage, setPairMessage] = useState("");
 
@@ -75,7 +85,7 @@ export default function VolunteerPortal() {
   const [myTeams, setMyTeams] = useState<Team[]>([]);
   const [showTeamForm, setShowTeamForm] = useState(false);
   const [newTeamName, setNewTeamName] = useState("");
-  const [newTeamMembers, setNewTeamMembers] = useState<{ name: string }[]>([{ name: "" }]);
+  const [newTeamMembers, setNewTeamMembers] = useState<{ name: string; isOver21: boolean | null }[]>([{ name: "", isOver21: null }]);
   const [teamSignUpShiftId, setTeamSignUpShiftId] = useState<string | null>(null);
   const [teamSignUpTeamId, setTeamSignUpTeamId] = useState<string | null>(null);
 
@@ -112,7 +122,8 @@ export default function VolunteerPortal() {
 
   const handleRegister = async () => {
     setError("");
-    if (!name) {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
       setError("Please enter your name.");
       return;
     }
@@ -124,12 +135,24 @@ export default function VolunteerPortal() {
     const res = await fetch("/api/volunteers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, email: email || null, phone: phone || null, role: registerAsTeamLead ? "team_lead" : "volunteer" }),
+      body: JSON.stringify({
+        name: trimmedName,
+        email: email || null,
+        phone: phone || null,
+        role: registerAsTeamLead ? "team_lead" : "volunteer",
+        // Only send contactPref when both channels are provided; otherwise it's implied
+        contactPref: (email && phone) ? contactPref : (email ? "email" : "sms"),
+        isOver21,
+      }),
     });
     setRegisterLoading(false);
 
     if (res.ok) {
       const data = await res.json();
+      if (data.alreadyRegistered) {
+        setError(`You're already registered, ${data.name}! Use "Already Registered?" on the home screen to look up your schedule.`);
+        return;
+      }
       setVolunteer({ ...data, assignments: [], pairRequests: [] });
       // If they requested team lead, give them a chance to build their team right now
       setStep(registerAsTeamLead ? "team-setup" : "dashboard");
@@ -151,7 +174,11 @@ export default function VolunteerPortal() {
     });
 
     if (res.ok) {
-      setSuccess("Your request has been submitted and is pending admin approval!");
+      const data = await res.json();
+      // triaged:true means the system auto-confirmed the spot; false means pending review
+      setSuccess(data.triaged
+        ? "You're confirmed! Your spot has been reserved. 🎉"
+        : "Request submitted! An admin will review and confirm your spot soon.");
       refreshData();
     } else {
       const data = await res.json();
@@ -172,6 +199,9 @@ export default function VolunteerPortal() {
     if (res.ok) {
       setSuccess("You've been removed from the shift.");
       refreshData();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || "Could not remove you from the shift. Please try again.");
     }
   };
 
@@ -191,6 +221,7 @@ export default function VolunteerPortal() {
         partnerName,
         partnerEmail: registerPartner ? partnerEmail || null : null,
         partnerPhone: registerPartner ? partnerPhone || null : null,
+        partnerIsOver21: registerPartner ? partnerIsOver21 : undefined,
         message: pairMessage || null,
       }),
     });
@@ -251,7 +282,9 @@ export default function VolunteerPortal() {
   const handleCreateTeam = async () => {
     if (!volunteer || !newTeamName.trim()) return;
     setError("");
-    const validMembers = newTeamMembers.filter((m) => m.name.trim());
+    const validMembers = newTeamMembers
+      .filter((m) => m.name.trim())
+      .map((m) => ({ name: m.name.trim(), isOver21: m.isOver21 }));
     const res = await fetch("/api/teams", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -259,7 +292,7 @@ export default function VolunteerPortal() {
     });
     if (res.ok) {
       setNewTeamName("");
-      setNewTeamMembers([{ name: "" }]);
+      setNewTeamMembers([{ name: "", isOver21: null }]);
       if (step === "team-setup") {
         // Coming from registration — load teams then go to dashboard
         refreshData();
@@ -386,6 +419,7 @@ export default function VolunteerPortal() {
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                autoComplete="name"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-green-400 focus:border-transparent outline-none"
                 placeholder="John Smith"
               />
@@ -398,11 +432,12 @@ export default function VolunteerPortal() {
                 type="tel"
                 value={phone}
                 onChange={(e) => setPhone(fmtPhoneInput(e.target.value))}
+                autoComplete="tel"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-green-400 focus:border-transparent outline-none"
                 placeholder="555-123-4567"
                 required
               />
-              <p className="text-xs text-gray-500 mt-1">Required — we&apos;ll text you shift reminders.</p>
+              <p className="text-xs text-gray-500 mt-1">Required — we&apos;ll send you automated shift reminders before the big day!</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -412,11 +447,83 @@ export default function VolunteerPortal() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-green-400 focus:border-transparent outline-none"
                 placeholder="john@example.com"
               />
-              <p className="text-xs text-gray-500 mt-1">Add it to also get email reminders.</p>
+              <p className="text-xs text-gray-500 mt-1">Add your email to also receive reminders with a calendar invite you can save.</p>
             </div>
+
+            {/* Contact preference — shown only when both channels are provided */}
+            {phone && email && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-2 transition-all duration-300">
+                <p className="text-sm font-semibold text-green-900">📬 How would you like to receive reminders?</p>
+                <p className="text-xs text-green-700">
+                  We&apos;ll send automated reminders before the big day — pick your preference below.
+                </p>
+                <div className="flex flex-col gap-2 mt-1">
+                  {(
+                    [
+                      { value: "both",  label: "📱 + 📧  Both text & email", desc: "Get a text AND an email (email includes a calendar invite)" },
+                      { value: "email", label: "📧  Email only",             desc: "Email reminder with a calendar invite attached" },
+                      { value: "sms",   label: "📱  Text message only",      desc: "Quick SMS reminder with a link to add to your calendar" },
+                    ] as const
+                  ).map(({ value, label, desc }) => (
+                    <label key={value} className={`flex items-start gap-3 cursor-pointer rounded-lg p-2.5 border transition-colors ${
+                      contactPref === value
+                        ? "border-green-500 bg-white"
+                        : "border-transparent hover:border-green-300 hover:bg-white/60"
+                    }`}>
+                      <input
+                        type="radio"
+                        name="contactPref"
+                        value={value}
+                        checked={contactPref === value}
+                        onChange={() => setContactPref(value)}
+                        className="mt-0.5 accent-green-600"
+                      />
+                      <span>
+                        <span className="block text-sm font-medium text-gray-800">{label}</span>
+                        <span className="block text-xs text-gray-500">{desc}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 21+ age verification */}
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-2">
+              <p className="text-sm font-semibold text-amber-900">🍺 Are you 21 years of age or older?</p>
+              <p className="text-xs text-amber-700">Required if you wish to volunteer for beer pouring or alcohol service roles.</p>
+              <div className="flex gap-4 mt-1">
+                <label className={`flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 transition-colors text-sm font-medium ${
+                  isOver21 === true ? "border-amber-500 bg-white text-amber-900" : "border-gray-200 bg-white text-gray-600 hover:border-amber-300"
+                }`}>
+                  <input
+                    type="radio"
+                    name="isOver21"
+                    checked={isOver21 === true}
+                    onChange={() => setIsOver21(true)}
+                    className="accent-amber-600"
+                  />
+                  Yes, I am 21+
+                </label>
+                <label className={`flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 transition-colors text-sm font-medium ${
+                  isOver21 === false ? "border-gray-400 bg-white text-gray-700" : "border-gray-200 bg-white text-gray-600 hover:border-gray-300"
+                }`}>
+                  <input
+                    type="radio"
+                    name="isOver21"
+                    checked={isOver21 === false}
+                    onChange={() => setIsOver21(false)}
+                    className="accent-gray-600"
+                  />
+                  No, I am under 21
+                </label>
+              </div>
+            </div>
+
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input
                 type="checkbox"
@@ -486,17 +593,30 @@ export default function VolunteerPortal() {
                 Add names now — they don&apos;t need to be registered yet. You&apos;ll be listed automatically as the team leader.
               </p>
               {newTeamMembers.map((m, i) => (
-                <div key={i} className="flex gap-2 mb-2">
+                <div key={i} className="flex flex-wrap items-center gap-2 mb-2">
                   <input
                     value={m.name}
                     onChange={(e) => {
                       const u = [...newTeamMembers];
-                      u[i] = { name: e.target.value };
+                      u[i] = { ...u[i], name: e.target.value };
                       setNewTeamMembers(u);
                     }}
-                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-400 outline-none"
+                    className="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-400 outline-none"
                     placeholder={`Member ${i + 1} name`}
                   />
+                  <label className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      checked={m.isOver21 === true}
+                      onChange={(e) => {
+                        const u = [...newTeamMembers];
+                        u[i] = { ...u[i], isOver21: e.target.checked ? true : null };
+                        setNewTeamMembers(u);
+                      }}
+                      className="w-3.5 h-3.5 accent-amber-600"
+                    />
+                    21+
+                  </label>
                   {newTeamMembers.length > 1 && (
                     <button
                       onClick={() => setNewTeamMembers(newTeamMembers.filter((_, j) => j !== i))}
@@ -508,8 +628,9 @@ export default function VolunteerPortal() {
                   )}
                 </div>
               ))}
+              <p className="text-xs text-gray-400 mb-1">Check &quot;21+&quot; for members who are 21 or older (required for pouring roles).</p>
               <button
-                onClick={() => setNewTeamMembers([...newTeamMembers, { name: "" }])}
+                onClick={() => setNewTeamMembers([...newTeamMembers, { name: "", isOver21: null }])}
                 className="text-teal-700 text-sm font-medium hover:text-teal-900 mt-1"
               >
                 + Add Another Member
@@ -527,7 +648,7 @@ export default function VolunteerPortal() {
             <button
               onClick={() => {
                 setNewTeamName("");
-                setNewTeamMembers([{ name: "" }]);
+                setNewTeamMembers([{ name: "", isOver21: null }]);
                 setStep("dashboard");
               }}
               className="w-full text-gray-500 text-sm hover:text-gray-700 transition-colors"
@@ -621,33 +742,53 @@ export default function VolunteerPortal() {
           </div>
 
           {registerPartner && (
-            <div className="mt-3 grid sm:grid-cols-2 gap-4 bg-white border border-purple-200 rounded-lg p-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Partner&apos;s Phone <span className="text-red-600">*</span>
-                </label>
-                <input
-                  type="tel"
-                  value={partnerPhone}
-                  onChange={(e) => setPartnerPhone(fmtPhoneInput(e.target.value))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-400 outline-none"
-                  placeholder="555-123-4567"
-                  required
-                />
+            <div className="mt-3 bg-white border border-purple-200 rounded-lg p-4 space-y-3">
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Partner&apos;s Phone <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    type="tel"
+                    value={partnerPhone}
+                    onChange={(e) => setPartnerPhone(fmtPhoneInput(e.target.value))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-400 outline-none"
+                    placeholder="555-123-4567"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Partner&apos;s Email <span className="text-gray-400 font-normal">(optional)</span>
+                  </label>
+                  <input
+                    type="email"
+                    value={partnerEmail}
+                    onChange={(e) => setPartnerEmail(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-400 outline-none"
+                    placeholder="partner@example.com"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Partner&apos;s Email <span className="text-gray-400 font-normal">(optional)</span>
-                </label>
-                <input
-                  type="email"
-                  value={partnerEmail}
-                  onChange={(e) => setPartnerEmail(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-400 outline-none"
-                  placeholder="partner@example.com"
-                />
+              {/* Partner 21+ verification */}
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <p className="text-xs font-semibold text-amber-900 mb-2">🍺 Is your partner 21 or older?</p>
+                <div className="flex gap-3">
+                  <label className={`flex items-center gap-1.5 cursor-pointer px-3 py-1.5 rounded-lg border transition-colors text-xs font-medium ${
+                    partnerIsOver21 === true ? "border-amber-500 bg-white text-amber-900" : "border-gray-200 bg-white text-gray-600 hover:border-amber-300"
+                  }`}>
+                    <input type="radio" name="partnerIsOver21" checked={partnerIsOver21 === true} onChange={() => setPartnerIsOver21(true)} className="accent-amber-600" />
+                    Yes, 21+
+                  </label>
+                  <label className={`flex items-center gap-1.5 cursor-pointer px-3 py-1.5 rounded-lg border transition-colors text-xs font-medium ${
+                    partnerIsOver21 === false ? "border-gray-400 bg-white text-gray-700" : "border-gray-200 bg-white text-gray-600 hover:border-gray-300"
+                  }`}>
+                    <input type="radio" name="partnerIsOver21" checked={partnerIsOver21 === false} onChange={() => setPartnerIsOver21(false)} className="accent-gray-600" />
+                    Under 21
+                  </label>
+                </div>
               </div>
-              <p className="text-xs text-gray-500 sm:col-span-2">Phone is required so we can text your partner shift reminders. This creates a volunteer account for them.</p>
+              <p className="text-xs text-gray-500">Phone is required so we can text your partner shift reminders. This creates a volunteer account for them.</p>
             </div>
           )}
 
@@ -722,7 +863,12 @@ export default function VolunteerPortal() {
                       onClick={() => setSelectedCategory(catId)}
                       className="bg-white rounded-lg border border-amber-100 p-5 text-left hover:border-amber-400 hover:shadow-md transition-all group"
                     >
-                      <h4 className="font-bold text-amber-900 text-lg group-hover:text-amber-700">{name}</h4>
+                      <div className="flex items-start justify-between gap-2">
+                        <h4 className="font-bold text-amber-900 text-lg group-hover:text-amber-700">{name}</h4>
+                        {catShifts[0]?.category?.requiresOver21 && (
+                          <span className="flex-shrink-0 bg-amber-100 text-amber-800 text-xs font-bold px-2 py-0.5 rounded-full">🍺 21+</span>
+                        )}
+                      </div>
                       <p className="text-sm text-gray-500 mt-1">{catShifts.length} shift{catShifts.length !== 1 ? "s" : ""}</p>
                       <div className="mt-2 flex items-center gap-2">
                         <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
@@ -878,12 +1024,26 @@ export default function VolunteerPortal() {
                   <p>{fmt12(assignment.shift.startTime)} - {fmt12(assignment.shift.endTime)}</p>
                 </div>
               </div>
-              <button
-                onClick={() => handleRemove(assignment.id)}
-                className="bg-red-100 text-red-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-200 transition-colors whitespace-nowrap"
-              >
-                Remove Me
-              </button>
+              {removingAssignmentId === assignment.id ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-600">Remove from this shift?</span>
+                  <button
+                    onClick={() => { handleRemove(assignment.id); setRemovingAssignmentId(null); }}
+                    className="bg-red-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+                  >Yes, remove</button>
+                  <button
+                    onClick={() => setRemovingAssignmentId(null)}
+                    className="bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors"
+                  >Keep</button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setRemovingAssignmentId(assignment.id)}
+                  className="bg-red-100 text-red-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-200 transition-colors whitespace-nowrap"
+                >
+                  Remove Me
+                </button>
+              )}
             </div>
           ))}
 
@@ -935,19 +1095,33 @@ export default function VolunteerPortal() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Team Members (name only is fine)</label>
                 {newTeamMembers.map((m, i) => (
-                  <div key={i} className="flex gap-2 mb-2">
+                  <div key={i} className="flex flex-wrap items-center gap-2 mb-2">
                     <input
                       value={m.name}
-                      onChange={(e) => { const u = [...newTeamMembers]; u[i] = { name: e.target.value }; setNewTeamMembers(u); }}
-                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-400 outline-none"
+                      onChange={(e) => { const u = [...newTeamMembers]; u[i] = { ...u[i], name: e.target.value }; setNewTeamMembers(u); }}
+                      className="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-400 outline-none"
                       placeholder={`Member ${i + 1} name`}
                     />
+                    <label className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={m.isOver21 === true}
+                        onChange={(e) => {
+                          const u = [...newTeamMembers];
+                          u[i] = { ...u[i], isOver21: e.target.checked ? true : null };
+                          setNewTeamMembers(u);
+                        }}
+                        className="w-3.5 h-3.5 accent-amber-600"
+                      />
+                      21+
+                    </label>
                     {newTeamMembers.length > 1 && (
                       <button onClick={() => setNewTeamMembers(newTeamMembers.filter((_, j) => j !== i))} className="text-red-500 text-sm px-2 hover:text-red-700">Remove</button>
                     )}
                   </div>
                 ))}
-                <button onClick={() => setNewTeamMembers([...newTeamMembers, { name: "" }])} className="text-teal-700 text-sm font-medium hover:text-teal-900">+ Add Another Member</button>
+                <p className="text-xs text-gray-400 mb-1">Check &quot;21+&quot; for members who are 21 or older (required for pouring roles).</p>
+                <button onClick={() => setNewTeamMembers([...newTeamMembers, { name: "", isOver21: null }])} className="text-teal-700 text-sm font-medium hover:text-teal-900">+ Add Another Member</button>
               </div>
               <button onClick={handleCreateTeam} className="bg-teal-700 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-teal-800">Create Team</button>
             </div>

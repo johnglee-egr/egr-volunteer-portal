@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 
 export async function GET() {
   const categories = await prisma.category.findMany({
@@ -10,6 +11,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   const data = await req.json();
   if (!data.name) {
     return NextResponse.json({ error: "Category name is required" }, { status: 400 });
@@ -27,12 +29,14 @@ export async function POST(req: NextRequest) {
       type: data.type || "throughout",
       stationCount: data.stationCount || 1,
       volsPerStation: data.volsPerStation || 1,
+      requiresOver21: !!data.requiresOver21,
     },
   });
   return NextResponse.json(category, { status: 201 });
 }
 
 export async function PUT(req: NextRequest) {
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   const { id, reorder, ...data } = await req.json();
 
   // Bulk reorder: expects reorder = [{id, sortOrder}, ...]
@@ -61,6 +65,7 @@ export async function PUT(req: NextRequest) {
     if (data.type !== undefined) updateData.type = data.type;
     if (data.stationCount !== undefined) updateData.stationCount = data.stationCount;
     if (data.volsPerStation !== undefined) updateData.volsPerStation = data.volsPerStation;
+    if (data.requiresOver21 !== undefined) updateData.requiresOver21 = !!data.requiresOver21;
 
     const category = await prisma.category.update({ where: { id }, data: updateData });
     return NextResponse.json(category);
@@ -71,6 +76,7 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   const { id } = await req.json();
   try {
     await prisma.category.delete({ where: { id } });

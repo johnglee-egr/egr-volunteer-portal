@@ -46,7 +46,7 @@ export async function processReminders(now: Date = new Date()): Promise<ProcessR
       minutesUntil > WINDOW_2H_MIN // don't double-fire if they're closer than 2h
     ) {
       try {
-        await sendReminder(a.volunteer, a.shift);
+        await sendReminder(a.volunteer, a.shift, a.id);
         await prisma.assignment.update({ where: { id: a.id }, data: { reminded24h: true } });
         result.sent24h++;
       } catch (e) {
@@ -63,7 +63,7 @@ export async function processReminders(now: Date = new Date()): Promise<ProcessR
       minutesUntil >= -TOLERANCE_MIN
     ) {
       try {
-        await sendReminder(a.volunteer, a.shift);
+        await sendReminder(a.volunteer, a.shift, a.id);
         // mark both — if 24h was missed we count the 2h as the only one
         await prisma.assignment.update({
           where: { id: a.id },
@@ -117,6 +117,11 @@ export async function processSchedules(now: Date = new Date()): Promise<void> {
       console.log(`[schedules] fired schedule "${schedule.name}"`);
     } catch (e) {
       console.error(`[schedules] failed schedule ${schedule.id}:`, e);
+      // Mark as failed so it doesn't retry indefinitely
+      await prisma.notificationSchedule.update({
+        where: { id: schedule.id },
+        data: { status: "failed", lastRunAt: now },
+      }).catch(() => { /* ignore secondary failure */ });
     }
   }
 }

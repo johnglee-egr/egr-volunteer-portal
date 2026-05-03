@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { requireAdmin, isAdmin } from "@/lib/auth";
 
 export async function GET() {
   const requests = await prisma.pairRequest.findMany({
@@ -10,7 +11,11 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { requesterId, partnerId: directPartnerId, partnerName, partnerEmail, partnerPhone, shiftId, message, autoApprove } = await req.json();
+  const body = await req.json();
+  const { requesterId, partnerId: directPartnerId, partnerName, partnerEmail, partnerPhone, partnerIsOver21, shiftId, message } = body;
+  // autoApprove is an admin-only privilege — ignore it if the caller isn't an admin
+  const callerIsAdmin = await isAdmin();
+  const autoApprove = callerIsAdmin ? !!body.autoApprove : false;
 
   // Prefer a directly-supplied partnerId (from admin UI) over a name-based lookup.
   // Name lookup is kept for the volunteer-facing "pair request by name" flow.
@@ -45,11 +50,16 @@ export async function POST(req: NextRequest) {
       });
 
       if (!partner) {
+        // Infer contactPref from which channels were provided
+        const partnerContactPref = partnerEmail && partnerPhone ? "both" : partnerEmail ? "email" : "sms";
+        const resolvedPartnerIsOver21 = partnerIsOver21 === true ? true : partnerIsOver21 === false ? false : null;
         partner = await prisma.volunteer.create({
           data: {
             name: partnerName,
             email: partnerEmail || null,
             phone: partnerPhone,
+            contactPref: partnerContactPref,
+            isOver21: resolvedPartnerIsOver21,
           },
         });
       }
@@ -77,6 +87,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   const { id, status } = await req.json();
   const request = await prisma.pairRequest.update({
     where: { id },

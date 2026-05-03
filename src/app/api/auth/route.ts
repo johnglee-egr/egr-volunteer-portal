@@ -8,6 +8,7 @@ export async function POST(req: NextRequest) {
     response.cookies.set("harvest_admin_session", "authenticated", {
       httpOnly: true,
       sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
       maxAge: 60 * 60 * 24 * 7,
       path: "/",
     });

@@ -41,6 +41,9 @@ const PREBUILT: Array<{ name: string; subject: string; body: string; channel: st
 ];
 
 export async function GET() {
+  const unauthed = await requireAdmin();
+  if (unauthed) return unauthed;
+
   let templates = await prisma.notificationTemplate.findMany({ orderBy: { createdAt: "asc" } });
   if (templates.length === 0) {
     await prisma.notificationTemplate.createMany({ data: PREBUILT });
