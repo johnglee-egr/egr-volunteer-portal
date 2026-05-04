@@ -141,6 +141,7 @@ export function applyMerge(
   const dateStr = shift?.date
     ? new Date(shift.date).toLocaleDateString("en-US", {
         weekday: "long", month: "long", day: "numeric", year: "numeric",
+        timeZone: "UTC", // shift.date is stored as UTC midnight — display as-is
       })
     : "(date TBD)";
 

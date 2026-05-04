@@ -2,16 +2,24 @@
  * Minimal ICS (iCalendar) generator for volunteer shift calendar events.
  * No external dependencies — pure string formatting.
  * Compliant with RFC 5545: CRLF line endings, 75-octet line folding, trailing CRLF.
+ *
+ * Shift times are stored as local "HH:MM" strings in Eastern time (the festival
+ * is in East Grand Rapids, MI — America/Detroit).  We embed them as TZID-qualified
+ * local datetimes so calendar apps render the correct wall-clock time regardless of
+ * the viewer's own timezone.  DTSTAMP stays in UTC (it marks when the ICS was created).
  */
 
 import { fmt12 } from "./formatters";
+
+/** IANA timezone for the festival venue — Eastern time (handles EDT/EST automatically). */
+const FESTIVAL_TIMEZONE = "America/Detroit";
 
 function padTwo(n: number) {
   return String(n).padStart(2, "0");
 }
 
+/** UTC timestamp for DTSTAMP (when the ICS file was generated). */
 function toICSDateTime(date: Date): string {
-  // UTC format: YYYYMMDDTHHMMSSZ
   return (
     date.getUTCFullYear() +
     padTwo(date.getUTCMonth() + 1) +
@@ -20,6 +28,23 @@ function toICSDateTime(date: Date): string {
     padTwo(date.getUTCHours()) +
     padTwo(date.getUTCMinutes()) +
     "00Z"
+  );
+}
+
+/**
+ * Local datetime string (no trailing Z) for TZID-qualified DTSTART/DTEND lines.
+ * The dtStart/dtEnd Dates are built by stuffing the local HH:MM into the UTC slots
+ * of the Date object (see buildShiftEvent), so getUTCHours() gives the local hour.
+ */
+function toICSLocalDateTime(date: Date): string {
+  return (
+    date.getUTCFullYear() +
+    padTwo(date.getUTCMonth() + 1) +
+    padTwo(date.getUTCDate()) +
+    "T" +
+    padTwo(date.getUTCHours()) +
+    padTwo(date.getUTCMinutes()) +
+    "00"
   );
 }
 
@@ -74,8 +99,8 @@ export function generateICS(event: ICSEvent): string {
     "BEGIN:VEVENT",
     `UID:${event.uid}`,
     `DTSTAMP:${now}`,
-    `DTSTART:${toICSDateTime(event.dtStart)}`,
-    `DTEND:${toICSDateTime(event.dtEnd)}`,
+    `DTSTART;TZID=${FESTIVAL_TIMEZONE}:${toICSLocalDateTime(event.dtStart)}`,
+    `DTEND;TZID=${FESTIVAL_TIMEZONE}:${toICSLocalDateTime(event.dtEnd)}`,
     `SUMMARY:${esc(event.summary)}`,
     `DESCRIPTION:${esc(event.description)}`,
     ...(event.location ? [`LOCATION:${esc(event.location)}`] : []),
@@ -146,16 +171,20 @@ export function buildShiftEvent(
 
 /**
  * Build a "Add to Google Calendar" URL for a shift event.
+ *
+ * Using local datetime strings (no Z) + ctz=America/Detroit so that Google
+ * Calendar renders the correct wall-clock time at the festival venue, regardless
+ * of the viewer's own timezone.
  */
 export function buildGoogleCalendarUrl(event: ICSEvent): string {
-  // Remove fractional seconds from ISO string for Google Calendar compatibility
-  const fmt = (d: Date) =>
-    d.toISOString().replace(/\.\d+Z$/, "Z").replace(/[-:]/g, "");
+  // Local time strings — same values used in the TZID-qualified ICS lines
+  const fmt = (d: Date) => toICSLocalDateTime(d);
   const params = new URLSearchParams({
     action: "TEMPLATE",
     text: event.summary,
     dates: `${fmt(event.dtStart)}/${fmt(event.dtEnd)}`,
     details: event.description,
+    ctz: FESTIVAL_TIMEZONE,
     ...(event.location ? { location: event.location } : {}),
   });
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
