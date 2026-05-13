@@ -77,11 +77,31 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   const unauthed = await requireAdmin(); if (unauthed) return unauthed;
-  const { id } = await req.json();
+  const { id, deleteTeamMembers } = await req.json();
   if (!id) return NextResponse.json({ error: "Volunteer ID required" }, { status: 400 });
 
   // Wrap in a transaction so a partial failure doesn't leave orphaned data
   await prisma.$transaction(async (tx) => {
+    // If requested, also delete every member of the teams this volunteer leads.
+    if (deleteTeamMembers) {
+      const ledTeams = await tx.team.findMany({
+        where: { leaderId: id },
+        include: { members: true },
+      });
+      const memberIds = new Set<string>();
+      for (const t of ledTeams) {
+        for (const m of t.members) {
+          if (m.volunteerId !== id) memberIds.add(m.volunteerId);
+        }
+      }
+      for (const memberId of memberIds) {
+        // Each member might themselves lead a team/group — clean those up first
+        await tx.team.deleteMany({ where: { leaderId: memberId } });
+        await tx.volunteerGroup.deleteMany({ where: { leaderId: memberId } });
+        await tx.volunteer.delete({ where: { id: memberId } });
+      }
+    }
+
     // Teams and groups led by this volunteer have no cascade on the leader FK,
     // so remove them first (their members cascade automatically).
     await tx.team.deleteMany({ where: { leaderId: id } });
@@ -110,8 +130,10 @@ export async function PUT(req: NextRequest) {
   if (isOver21 !== undefined) updateData.isOver21 = isOver21 === true ? true : isOver21 === false ? false : null;
   // Approve pending role: promote to role and clear pendingRole
   if (approvePendingRole) { updateData.role = approvePendingRole; updateData.pendingRole = null; }
-  // Deny pending role: just clear pendingRole
-  if (denyPendingRole) { updateData.pendingRole = null; }
+  // Deny pending role: clear (or mark as denied-but-kept) depending on keepDenied flag
+  if (denyPendingRole) {
+    updateData.pendingRole = (body as Record<string, unknown>).keepDenied ? "team_lead_denied" : null;
+  }
 
   const volunteer = await prisma.volunteer.update({
     where: { id: id as string },

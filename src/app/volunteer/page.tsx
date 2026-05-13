@@ -46,7 +46,7 @@ interface Volunteer {
 }
 
 export default function VolunteerPortal() {
-  const [step, setStep] = useState<"choose" | "lookup" | "register" | "team-setup" | "dashboard">("choose");
+  const [step, setStep] = useState<"choose" | "lookup" | "register" | "team-setup" | "shift-choice" | "dashboard">("choose");
   const [volunteer, setVolunteer] = useState<Volunteer | null>(null);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [error, setError] = useState("");
@@ -294,9 +294,9 @@ export default function VolunteerPortal() {
       setNewTeamName("");
       setNewTeamMembers([{ name: "", isOver21: null }]);
       if (step === "team-setup") {
-        // Coming from registration — load teams then go to dashboard
+        // Coming from registration — load teams then ask about shift selection
         refreshData();
-        setStep("dashboard");
+        setStep("shift-choice");
       } else {
         setSuccess("Team created! You can now sign your team up for shifts.");
         setShowTeamForm(false);
@@ -546,6 +546,42 @@ export default function VolunteerPortal() {
               className="w-full text-gray-500 text-sm hover:text-gray-700 transition-colors"
             >
               ← Back
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Shift choice prompt (after team is created during registration flow) ────
+  if (step === "shift-choice") {
+    return (
+      <div className="max-w-lg mx-auto mt-16 px-4">
+        <div className="bg-white rounded-xl shadow-md p-8 border border-teal-200">
+          <div className="text-center mb-6">
+            <div className="text-5xl mb-3">🎉</div>
+            <h1 className="text-2xl font-bold text-teal-900 mb-2">Team Created!</h1>
+            <p className="text-gray-600 text-sm">
+              Great news, <strong>{volunteer?.name}</strong>! Your team is all set. Would you like to browse and select shifts now, or let the Festival Volunteer Manager handle assignments?
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-4">
+            <button
+              onClick={() => { setActiveTab("shifts"); setStep("dashboard"); }}
+              className="w-full bg-teal-700 text-white rounded-xl p-5 text-left hover:bg-teal-800 transition-colors shadow-sm"
+            >
+              <div className="text-2xl mb-1">📅</div>
+              <div className="font-bold text-lg">Yes — Pick Shifts Now</div>
+              <div className="text-teal-200 text-sm mt-0.5">Browse available shifts and sign your team up right away.</div>
+            </button>
+            <button
+              onClick={() => { setSuccess("Thanks for signing up! The Festival Volunteer Manager will be in touch soon with your specific shift assignments."); setStep("dashboard"); }}
+              className="w-full bg-gray-50 border-2 border-gray-200 text-gray-800 rounded-xl p-5 text-left hover:bg-gray-100 transition-colors"
+            >
+              <div className="text-2xl mb-1">📬</div>
+              <div className="font-bold text-lg">No — Leave It to the Manager</div>
+              <div className="text-gray-500 text-sm mt-0.5">We&apos;ll reach out with more info on your specific assignments closer to the festival.</div>
             </button>
           </div>
         </div>

@@ -11,6 +11,7 @@ interface Volunteer {
   email?: string;
   phone?: string;
   role?: string;
+  pendingRole?: string | null;
   isOver21?: boolean | null;
 }
 
@@ -113,6 +114,9 @@ export default function AdminDashboard() {
   const [assigningTeamId, setAssigningTeamId] = useState<string | null>(null);
   const [teamAssignMode, setTeamAssignMode] = useState<"shift" | "category">("shift");
   const [teamAssignTargetId, setTeamAssignTargetId] = useState("");
+
+  // Deny-team-lead confirmation modal
+  const [denyTeamModal, setDenyTeamModal] = useState<{ id: string; name: string } | null>(null);
 
   // Volunteer detail modal
   const [viewingVolunteer, setViewingVolunteer] = useState<(Volunteer & { assignments?: Assignment[] }) | null>(null);
@@ -2305,7 +2309,7 @@ export default function AdminDashboard() {
                     }
 
                     return filtered.map((v) => (
-                      <tr key={v.id} className={`border-t border-amber-50 hover:bg-amber-50/50 ${selectedVolIds.has(v.id) ? "bg-amber-50/70" : ""}`}>
+                      <tr key={v.id} className={`border-t border-amber-50 hover:bg-amber-50/50 ${selectedVolIds.has(v.id) ? "bg-amber-50/70" : v.pendingRole === "team_lead_denied" ? "bg-yellow-50/60" : ""}`}>
                         <td className="px-3 py-3">
                           <input
                             type="checkbox"
@@ -2325,6 +2329,7 @@ export default function AdminDashboard() {
                             <span>{v.name}</span>
                             {v.isOver21 === true && <span className="text-xs bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full font-semibold">21+</span>}
                             {v.isOver21 === false && <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">under 21</span>}
+                            {v.pendingRole === "team_lead_denied" && <span className="text-xs bg-yellow-100 text-yellow-800 px-1.5 py-0.5 rounded-full font-semibold">Team Lead Denied</span>}
                           </div>
                         </td>
                         <td className="px-4 py-3">
@@ -2458,7 +2463,7 @@ export default function AdminDashboard() {
                   }
 
                   return ordered.map((v) => (
-                    <tr key={v.id} className={`border-t border-amber-50 hover:bg-amber-50/50 ${selectedVolIds.has(v.id) ? "bg-amber-50/70" : ""} ${v._indent ? "bg-blue-50/30" : ""}`}>
+                    <tr key={v.id} className={`border-t border-amber-50 hover:bg-amber-50/50 ${selectedVolIds.has(v.id) ? "bg-amber-50/70" : v.pendingRole === "team_lead_denied" ? "bg-yellow-50/60" : ""} ${v._indent ? "bg-blue-50/30" : ""}`}>
                       <td className="px-3 py-3">
                         <input
                           type="checkbox"
@@ -2497,6 +2502,7 @@ export default function AdminDashboard() {
                           <span>{v.name}</span>
                           {v.isOver21 === true && <span className="text-xs bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full font-semibold">21+</span>}
                           {v.isOver21 === false && <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">under 21</span>}
+                          {v.pendingRole === "team_lead_denied" && <span className="text-xs bg-yellow-100 text-yellow-800 px-1.5 py-0.5 rounded-full font-semibold">Team Lead Denied</span>}
                           {v._teamId != null && !expandedTeamIds.has(v._teamId) && (v._memberCount ?? 0) > 0 && (
                             <span className="text-gray-400 text-xs ml-0.5">+{v._memberCount}</span>
                           )}
@@ -2753,11 +2759,10 @@ export default function AdminDashboard() {
           } else if (item.type === "partner") {
             await handlePairAction(item.id.replace("pr-", ""), "denied");
           } else if (item.type === "team_lead") {
+            // Open the modal instead of immediately acting — let admin choose
             const id = item.id.replace("tl-", "");
             const v = volunteers.find((vol: Volunteer) => vol.id === id);
-            await fetch("/api/volunteers", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, denyPendingRole: "team_lead" }) });
-            setSuccess(`${v?.name || "Volunteer"}'s Team Lead request denied.`);
-            loadData();
+            setDenyTeamModal({ id, name: v?.name || "Volunteer" });
           }
         };
 
@@ -2804,6 +2809,71 @@ export default function AdminDashboard() {
           </div>
         );
       })()}
+
+      {/* ========= DENY TEAM LEAD MODAL ========= */}
+      {denyTeamModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setDenyTeamModal(null)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3 mb-4">
+              <span className="text-3xl">⛔</span>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Deny Team Lead Request</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  What should happen to <strong>{denyTeamModal.name}</strong> and their team members?
+                </p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <button
+                onClick={async () => {
+                  const { id, name } = denyTeamModal;
+                  setDenyTeamModal(null);
+                  await fetch("/api/volunteers", {
+                    method: "DELETE",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ id, deleteTeamMembers: true }),
+                  });
+                  setSuccess(`${name} and all team members removed from the volunteer list.`);
+                  loadData();
+                }}
+                className="w-full bg-red-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-red-700 transition-colors text-sm text-left flex items-start gap-3"
+              >
+                <span className="text-lg leading-none">🗑️</span>
+                <div>
+                  <div>Yes — Remove Team Lead &amp; All Members</div>
+                  <div className="font-normal text-red-200 text-xs mt-0.5">Deletes all team members from the volunteer list and removes any shift assignments.</div>
+                </div>
+              </button>
+              <button
+                onClick={async () => {
+                  const { id, name } = denyTeamModal;
+                  setDenyTeamModal(null);
+                  await fetch("/api/volunteers", {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ id, denyPendingRole: "team_lead", keepDenied: true }),
+                  });
+                  setSuccess(`${name}'s Team Lead request denied. They remain on the volunteer list as non-approved.`);
+                  loadData();
+                }}
+                className="w-full bg-amber-50 border border-amber-300 text-amber-900 py-3 px-4 rounded-lg font-semibold hover:bg-amber-100 transition-colors text-sm text-left flex items-start gap-3"
+              >
+                <span className="text-lg leading-none">📋</span>
+                <div>
+                  <div>No — Keep on List as Non-Approved</div>
+                  <div className="font-normal text-amber-700 text-xs mt-0.5">They stay on the volunteer list with a yellow highlight but without the Team Lead role.</div>
+                </div>
+              </button>
+              <button
+                onClick={() => setDenyTeamModal(null)}
+                className="w-full text-gray-500 text-sm hover:text-gray-700 py-2 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ========= VOLUNTEER DETAIL MODAL ========= */}
       {viewingVolunteer && (
