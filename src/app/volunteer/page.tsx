@@ -46,7 +46,7 @@ interface Volunteer {
 }
 
 export default function VolunteerPortal() {
-  const [step, setStep] = useState<"choose" | "lookup" | "register" | "team-setup" | "shift-choice" | "dashboard">("choose");
+  const [step, setStep] = useState<"choose" | "lookup" | "register" | "team-setup" | "shift-choice" | "signup-complete" | "dashboard">("choose");
   const [volunteer, setVolunteer] = useState<Volunteer | null>(null);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [error, setError] = useState("");
@@ -88,6 +88,9 @@ export default function VolunteerPortal() {
   const [newTeamMembers, setNewTeamMembers] = useState<{ name: string; isOver21: boolean | null }[]>([{ name: "", isOver21: null }]);
   const [teamSignUpShiftId, setTeamSignUpShiftId] = useState<string | null>(null);
   const [teamSignUpTeamId, setTeamSignUpTeamId] = useState<string | null>(null);
+
+  // Tracks whether we're in a "first-time shift selection" session (new signup flow)
+  const [isNewSignup, setIsNewSignup] = useState(false);
 
   // Shift selection drill-down: category → shift
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -154,6 +157,7 @@ export default function VolunteerPortal() {
         return;
       }
       setVolunteer({ ...data, assignments: [], pairRequests: [] });
+      setIsNewSignup(true); // show "Done — Confirm" bar when they reach the shifts tab
       // If they requested team lead, give them a chance to build their team right now
       setStep(registerAsTeamLead ? "team-setup" : "dashboard");
     } else {
@@ -553,6 +557,71 @@ export default function VolunteerPortal() {
     );
   }
 
+  // ── Sign-up complete thank-you screen ─────────────────────────────────────
+  if (step === "signup-complete") {
+    const confirmedShifts = volunteer?.assignments.filter((a) => a.status === "confirmed") ?? [];
+    const pendingShifts  = volunteer?.assignments.filter((a) => a.status === "pending")   ?? [];
+    const isTeamLead = volunteer?.role === "team_lead";
+
+    return (
+      <div className="max-w-lg mx-auto mt-10 px-4 pb-16">
+        <div className="bg-white rounded-2xl shadow-md p-8 border border-green-200 text-center">
+          <div className="text-6xl mb-4">🎉</div>
+          <h1 className="text-2xl font-bold text-green-800 mb-2">You&apos;re all set, {volunteer?.name}!</h1>
+          <p className="text-gray-600 text-sm mb-6">
+            {isTeamLead
+              ? "Your team has been registered and your shift requests are in. The Festival Volunteer Manager will confirm your assignments and be in touch with details closer to the event."
+              : "Thanks for signing up to volunteer at the EGR Harvest + Beer Festival! We'll be in touch with confirmation and more details closer to the event."}
+          </p>
+
+          {/* Shift summary */}
+          {(confirmedShifts.length > 0 || pendingShifts.length > 0) && (
+            <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-6 text-left">
+              <p className="text-sm font-semibold text-green-800 mb-3">Your shift request{confirmedShifts.length + pendingShifts.length !== 1 ? "s" : ""}:</p>
+              <div className="space-y-2">
+                {confirmedShifts.map((a) => (
+                  <div key={a.id} className="flex items-center gap-2 text-sm">
+                    <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap">Confirmed</span>
+                    <span className="font-medium text-gray-800">{a.shift.title}</span>
+                    <span className="text-gray-500 text-xs">{fmt12(a.shift.startTime)} – {fmt12(a.shift.endTime)}</span>
+                  </div>
+                ))}
+                {pendingShifts.map((a) => (
+                  <div key={a.id} className="flex items-center gap-2 text-sm">
+                    <span className="bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap">Pending</span>
+                    <span className="font-medium text-gray-800">{a.shift.title}</span>
+                    <span className="text-gray-500 text-xs">{fmt12(a.shift.startTime)} – {fmt12(a.shift.endTime)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {(confirmedShifts.length === 0 && pendingShifts.length === 0) && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6 text-sm text-amber-800">
+              No shifts selected yet — the Festival Volunteer Manager will reach out with your assignment details.
+            </div>
+          )}
+
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={() => { setActiveTab("my-schedule"); setStep("dashboard"); }}
+              className="w-full bg-green-700 text-white py-3 rounded-xl font-bold hover:bg-green-800 transition-colors"
+            >
+              View My Schedule
+            </button>
+            <button
+              onClick={() => { setActiveTab("shifts"); setStep("dashboard"); }}
+              className="w-full bg-gray-100 text-gray-700 py-3 rounded-xl font-medium hover:bg-gray-200 transition-colors"
+            >
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── Shift choice prompt (after team is created during registration flow) ────
   if (step === "shift-choice") {
     return (
@@ -568,7 +637,7 @@ export default function VolunteerPortal() {
 
           <div className="flex flex-col gap-4">
             <button
-              onClick={() => { setActiveTab("shifts"); setStep("dashboard"); }}
+              onClick={() => { setActiveTab("shifts"); setIsNewSignup(true); setStep("dashboard"); }}
               className="w-full bg-teal-700 text-white rounded-xl p-5 text-left hover:bg-teal-800 transition-colors shadow-sm"
             >
               <div className="text-2xl mb-1">📅</div>
@@ -699,7 +768,7 @@ export default function VolunteerPortal() {
 
   // Dashboard
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
+    <div className={`max-w-6xl mx-auto px-4 py-8 ${isNewSignup && activeTab === "shifts" ? "pb-24" : ""}`}>
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
         <div>
@@ -1009,6 +1078,24 @@ export default function VolunteerPortal() {
           </div>
         );
       })()}
+
+      {/* "Done selecting" sticky bar — shown for new signups browsing the shifts tab */}
+      {isNewSignup && activeTab === "shifts" && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t-2 border-green-300 shadow-lg">
+          <div className="max-w-6xl mx-auto px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="text-sm text-gray-600 text-center sm:text-left">
+              <span className="font-semibold text-green-700">✅ Done picking shifts?</span>
+              {" "}Click Confirm to complete your sign-up.
+            </div>
+            <button
+              onClick={() => { setIsNewSignup(false); setStep("signup-complete"); }}
+              className="bg-green-700 text-white px-8 py-2.5 rounded-lg font-bold hover:bg-green-800 transition-colors whitespace-nowrap shadow-sm"
+            >
+              Confirm My Selection →
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* My Schedule */}
       {activeTab === "my-schedule" && (
