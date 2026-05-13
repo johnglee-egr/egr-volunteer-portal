@@ -81,7 +81,8 @@ export async function POST(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   try {
-    const { id, name, addMembers, removeMembers, assignShiftId, assignCategoryId } = await req.json();
+    const body = await req.json();
+    const { id, name, addMembers, removeMembers, assignShiftId, assignCategoryId, spreadAcrossShifts } = body;
 
     // Rename team
     if (name) {
@@ -173,6 +174,48 @@ export async function PUT(req: NextRequest) {
             }
           }
           if (memberQueue.length === 0) break;
+        }
+      }
+    }
+
+    // Spread remaining team members across their already-selected shifts (earliest → latest)
+    if (body.spreadAcrossShifts) {
+      const fullTeam = await prisma.team.findUnique({
+        where: { id },
+        include: {
+          members: {
+            include: {
+              volunteer: { include: { assignments: { where: { status: "confirmed" } } } },
+            },
+          },
+        },
+      });
+      if (fullTeam) {
+        const shiftIds = new Set<string>();
+        for (const m of fullTeam.members) {
+          for (const a of m.volunteer.assignments) shiftIds.add(a.shiftId);
+        }
+        if (shiftIds.size > 0) {
+          const relevantShifts = await prisma.shift.findMany({
+            where: { id: { in: [...shiftIds] } },
+            include: { assignments: { where: { status: "confirmed" } } },
+            orderBy: [{ date: "asc" }, { startTime: "asc" }],
+          });
+          for (const shift of relevantShifts) {
+            const assignedIds = new Set(shift.assignments.map((a) => a.volunteerId));
+            const openSlots = shift.capacity - shift.assignments.length;
+            if (openSlots <= 0) continue;
+            const unassigned = fullTeam.members
+              .map((m) => m.volunteerId)
+              .filter((vid) => !assignedIds.has(vid));
+            for (let i = 0; i < Math.min(openSlots, unassigned.length); i++) {
+              await prisma.assignment.upsert({
+                where: { volunteerId_shiftId: { volunteerId: unassigned[i], shiftId: shift.id } },
+                create: { volunteerId: unassigned[i], shiftId: shift.id, status: "confirmed", assignedBy: "admin" },
+                update: { status: "confirmed", assignedBy: "admin" },
+              });
+            }
+          }
         }
       }
     }

@@ -23,7 +23,7 @@ interface Assignment {
   status: string;
   assignedBy: string;
   volunteer: Volunteer;
-  shift?: { id: string; title: string; startTime?: string; endTime?: string; categoryId?: string };
+  shift?: { id: string; title: string; date?: string; startTime?: string; endTime?: string; categoryId?: string };
 }
 
 interface Category {
@@ -117,6 +117,14 @@ export default function AdminDashboard() {
 
   // Deny-team-lead confirmation modal
   const [denyTeamModal, setDenyTeamModal] = useState<{ id: string; name: string } | null>(null);
+
+  // Spread-team modal (shown after approving a team lead who has shift sign-ups)
+  const [spreadTeamModal, setSpreadTeamModal] = useState<{ teamId: string; teamName: string; shiftCount: number; leaderName: string } | null>(null);
+
+  // Roster drag-and-drop
+  const [rosterTeamId, setRosterTeamId] = useState<string | null>(null);
+  const [rosterDragItem, setRosterDragItem] = useState<{ volunteerId: string; volName: string; assignmentId: string | null; fromShiftId: string | null } | null>(null);
+  const [rosterDragOverId, setRosterDragOverId] = useState<string | null>(null);
 
   // Delete volunteer modal (shown when the volunteer leads a team)
   const [deleteVolModal, setDeleteVolModal] = useState<{ vol: Volunteer; memberCount: number } | null>(null);
@@ -2755,7 +2763,25 @@ export default function AdminDashboard() {
             const id = item.id.replace("tl-", "");
             const v = volunteers.find((vol: Volunteer) => vol.id === id);
             await fetch("/api/volunteers", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, approvePendingRole: "team_lead" }) });
-            setSuccess(`${v?.name || "Volunteer"} is now a Team Lead!`);
+
+            // Fetch fresh team data to check if they lead a team with confirmed shift sign-ups
+            const teamsRes = await fetch("/api/teams");
+            const allTeams: Array<{ id: string; name: string; leader: { id: string }; members: Array<{ volunteer: { assignments: Array<{ status: string; shiftId: string }> } }> }> = teamsRes.ok ? await teamsRes.json() : [];
+            const led = allTeams.find((t) => t.leader.id === id);
+            const teamShiftIds = new Set<string>();
+            if (led) {
+              for (const m of led.members) {
+                for (const a of m.volunteer.assignments || []) {
+                  if (a.status === "confirmed" && a.shiftId) teamShiftIds.add(a.shiftId);
+                }
+              }
+            }
+
+            if (led && teamShiftIds.size > 0) {
+              setSpreadTeamModal({ teamId: led.id, teamName: led.name, shiftCount: teamShiftIds.size, leaderName: v?.name || "Volunteer" });
+            } else {
+              setSuccess(`${v?.name || "Volunteer"} is now a Team Lead!`);
+            }
             loadData();
           }
         };
@@ -2825,6 +2851,67 @@ export default function AdminDashboard() {
           </div>
         );
       })()}
+
+      {/* ========= SPREAD TEAM MODAL ========= */}
+      {spreadTeamModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setSpreadTeamModal(null)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3 mb-4">
+              <span className="text-3xl">📋</span>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Spread Team Across Shifts?</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  <strong>{spreadTeamModal.leaderName}</strong> is now a Team Lead! Their team has sign-ups across{" "}
+                  <strong>{spreadTeamModal.shiftCount} shift{spreadTeamModal.shiftCount !== 1 ? "s" : ""}</strong>.
+                  Would you like to spread remaining team members across the open slots, going earliest to latest?
+                </p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <button
+                onClick={async () => {
+                  const { teamId, teamName, leaderName } = spreadTeamModal!;
+                  setSpreadTeamModal(null);
+                  clearMessages();
+                  const res = await fetch("/api/teams", {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ id: teamId, spreadAcrossShifts: true }),
+                  });
+                  if (res.ok) {
+                    setSuccess(`${leaderName} is now a Team Lead! Team "${teamName}" members have been spread across open shift slots.`);
+                  } else {
+                    const d = await res.json();
+                    setError(d.error || "Spread failed.");
+                  }
+                  loadData();
+                }}
+                className="w-full bg-green-700 text-white py-3 px-4 rounded-lg font-semibold hover:bg-green-800 transition-colors text-sm text-left flex items-start gap-3"
+              >
+                <span className="text-lg leading-none">✅</span>
+                <div>
+                  <div>Yes — Fill Open Slots (Earliest → Latest)</div>
+                  <div className="font-normal text-green-200 text-xs mt-0.5">Assigns unplaced team members to available slots in order of shift time.</div>
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  const name = spreadTeamModal!.leaderName;
+                  setSpreadTeamModal(null);
+                  setSuccess(`${name} is now a Team Lead! Shift assignments left unchanged.`);
+                }}
+                className="w-full bg-gray-100 text-gray-700 py-3 px-4 rounded-lg font-semibold hover:bg-gray-200 transition-colors text-sm text-left flex items-start gap-3"
+              >
+                <span className="text-lg leading-none">⏭️</span>
+                <div>
+                  <div>No — Keep Assignments as Is</div>
+                  <div className="font-normal text-gray-500 text-xs mt-0.5">Team members keep their current shift assignments without changes.</div>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ========= DENY TEAM LEAD MODAL ========= */}
       {denyTeamModal && (
@@ -3253,6 +3340,12 @@ export default function AdminDashboard() {
                       Assign Team
                     </button>
                     <button
+                      onClick={() => setRosterTeamId(rosterTeamId === team.id ? null : team.id)}
+                      className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-indigo-700"
+                    >
+                      {rosterTeamId === team.id ? "Hide Roster" : "Roster"}
+                    </button>
+                    <button
                       onClick={() => showConfirm(
                         `Delete team "${team.name}"? Members will remain as volunteers.`,
                         async () => {
@@ -3342,6 +3435,178 @@ export default function AdminDashboard() {
                     );
                   })}
                 </div>
+
+                {/* ── Drag-and-drop roster view ── */}
+                {rosterTeamId === team.id && (() => {
+                  type RichAssignment = Assignment & { shiftId: string };
+
+                  // Build a map: shiftId → { shiftInfo, memberAssignments[] }
+                  const shiftCols = new Map<string, {
+                    shiftId: string;
+                    title: string;
+                    date: string;
+                    startTime: string;
+                    endTime: string;
+                    capacity: number;
+                    filledCount: number;
+                    members: { volunteerId: string; volName: string; isLeader: boolean; assignmentId: string }[];
+                  }>();
+
+                  for (const tm of team.members) {
+                    const volAssignments = ((tm.volunteer as Volunteer & { assignments?: Assignment[] }).assignments || []) as RichAssignment[];
+                    for (const a of volAssignments) {
+                      if (a.status !== "confirmed" || !a.shiftId) continue;
+                      if (!shiftCols.has(a.shiftId)) {
+                        // Get capacity+filled from shifts state
+                        const sf = shifts.find((s) => s.id === a.shiftId);
+                        shiftCols.set(a.shiftId, {
+                          shiftId: a.shiftId,
+                          title: a.shift?.title || "Shift",
+                          date: a.shift?.date || "",
+                          startTime: a.shift?.startTime || "",
+                          endTime: a.shift?.endTime || "",
+                          capacity: sf?.capacity ?? 0,
+                          filledCount: sf?.assignments.filter((x) => x.status === "confirmed").length ?? 0,
+                          members: [],
+                        });
+                      }
+                      shiftCols.get(a.shiftId)!.members.push({
+                        volunteerId: tm.volunteer.id,
+                        volName: tm.volunteer.name,
+                        isLeader: tm.volunteer.id === team.leader.id,
+                        assignmentId: a.id,
+                      });
+                    }
+                  }
+
+                  // Sort columns by date + startTime
+                  const sortedCols = [...shiftCols.values()].sort((a, b) =>
+                    (a.date + a.startTime).localeCompare(b.date + b.startTime)
+                  );
+
+                  // Members not in any team shift
+                  const assignedInTeamShifts = new Set<string>();
+                  for (const col of shiftCols.values()) {
+                    for (const m of col.members) assignedInTeamShifts.add(m.volunteerId);
+                  }
+                  const unassignedMembers = team.members.filter((tm) => !assignedInTeamShifts.has(tm.volunteer.id));
+
+                  const handleDrop = async (toShiftId: string | null) => {
+                    if (!rosterDragItem) return;
+                    const { volunteerId, volName, assignmentId, fromShiftId } = rosterDragItem;
+                    if (fromShiftId === toShiftId) { setRosterDragItem(null); setRosterDragOverId(null); return; }
+                    clearMessages();
+                    if (toShiftId) {
+                      const res = await fetch("/api/assignments", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ volunteerId, shiftId: toShiftId, assignedBy: "admin" }),
+                      });
+                      if (!res.ok) {
+                        const d = await res.json();
+                        setError(d.error || `Could not assign ${volName} to shift.`);
+                        setRosterDragItem(null); setRosterDragOverId(null); return;
+                      }
+                    }
+                    if (fromShiftId && assignmentId) {
+                      await fetch("/api/assignments", {
+                        method: "DELETE",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ assignmentId }),
+                      });
+                    }
+                    setRosterDragItem(null); setRosterDragOverId(null);
+                    loadData();
+                  };
+
+                  const MemberCard = ({ volunteerId, volName, isLeader, assignmentId, fromShiftId }: { volunteerId: string; volName: string; isLeader: boolean; assignmentId: string | null; fromShiftId: string | null }) => (
+                    <div
+                      draggable
+                      onDragStart={() => setRosterDragItem({ volunteerId, volName, assignmentId, fromShiftId })}
+                      onDragEnd={() => { setRosterDragItem(null); setRosterDragOverId(null); }}
+                      className={`flex items-center gap-1 px-2 py-1.5 rounded text-xs font-medium cursor-grab select-none shadow-sm border ${isLeader ? "bg-teal-100 border-teal-300 text-teal-900" : "bg-white border-gray-200 text-gray-800"} ${rosterDragItem?.volunteerId === volunteerId && rosterDragItem?.fromShiftId === fromShiftId ? "opacity-40" : ""}`}
+                    >
+                      {isLeader && <span className="text-teal-600 font-bold text-[10px]">TL</span>}
+                      <span className="truncate">{volName}</span>
+                      <span className="text-gray-300 ml-auto">⠿</span>
+                    </div>
+                  );
+
+                  return (
+                    <div className="mt-5 border-t border-indigo-100 pt-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="font-semibold text-indigo-900 text-sm">📋 Shift Roster — drag members between shifts</h4>
+                        <span className="text-xs text-gray-400">Drag a member card to reassign them</span>
+                      </div>
+                      <div className="flex gap-3 overflow-x-auto pb-3 min-h-[120px]">
+                        {/* Unassigned pool */}
+                        <div
+                          className={`min-w-[150px] flex-shrink-0 rounded-xl border-2 border-dashed p-3 transition-colors ${rosterDragOverId === "unassigned" ? "border-blue-400 bg-blue-50" : "border-gray-300 bg-gray-50"}`}
+                          onDragOver={(e) => { e.preventDefault(); setRosterDragOverId("unassigned"); }}
+                          onDragLeave={() => setRosterDragOverId(null)}
+                          onDrop={(e) => { e.preventDefault(); handleDrop(null); }}
+                        >
+                          <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-2">Unassigned</p>
+                          <div className="space-y-1.5">
+                            {unassignedMembers.length === 0 && (
+                              <p className="text-xs text-gray-400 italic">All members assigned</p>
+                            )}
+                            {unassignedMembers.map((tm) => (
+                              <MemberCard
+                                key={tm.volunteer.id}
+                                volunteerId={tm.volunteer.id}
+                                volName={tm.volunteer.name}
+                                isLeader={tm.volunteer.id === team.leader.id}
+                                assignmentId={null}
+                                fromShiftId={null}
+                              />
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Shift columns */}
+                        {sortedCols.map((col) => {
+                          const open = col.capacity - col.filledCount;
+                          const isOver = rosterDragOverId === col.shiftId;
+                          return (
+                            <div
+                              key={col.shiftId}
+                              className={`min-w-[160px] flex-shrink-0 rounded-xl border-2 p-3 transition-colors ${isOver ? "border-indigo-400 bg-indigo-50" : "border-teal-200 bg-teal-50"}`}
+                              onDragOver={(e) => { e.preventDefault(); setRosterDragOverId(col.shiftId); }}
+                              onDragLeave={() => setRosterDragOverId(null)}
+                              onDrop={(e) => { e.preventDefault(); handleDrop(col.shiftId); }}
+                            >
+                              <p className="text-[11px] font-bold text-teal-800 truncate">{col.title}</p>
+                              <p className="text-[10px] text-gray-500 mb-1">{fmt12(col.startTime)} – {fmt12(col.endTime)}</p>
+                              <p className={`text-[10px] font-medium mb-2 ${open > 0 ? "text-green-600" : "text-red-500"}`}>
+                                {open > 0 ? `${open} slot${open !== 1 ? "s" : ""} open` : "Full"}
+                              </p>
+                              <div className="space-y-1.5">
+                                {col.members.length === 0 && (
+                                  <p className="text-xs text-gray-400 italic">Drop here</p>
+                                )}
+                                {col.members.map((m) => (
+                                  <MemberCard
+                                    key={m.volunteerId}
+                                    volunteerId={m.volunteerId}
+                                    volName={m.volName}
+                                    isLeader={m.isLeader}
+                                    assignmentId={m.assignmentId}
+                                    fromShiftId={col.shiftId}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {sortedCols.length === 0 && (
+                          <p className="text-sm text-gray-400 self-center pl-2">No team shifts found. Use &ldquo;Assign Team&rdquo; to add this team to shifts first.</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             ))}
           </div>
