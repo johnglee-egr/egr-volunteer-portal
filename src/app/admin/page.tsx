@@ -3004,14 +3004,20 @@ export default function AdminDashboard() {
         return (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setDeleteVolModal(null)}>
             <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-start gap-3 mb-4">
+              <div className="flex items-start gap-3 mb-2">
                 <span className="text-3xl">🗑️</span>
                 <div>
                   <h3 className="text-lg font-bold text-gray-900">Delete {vol.name}?</h3>
-                  <p className="text-sm text-gray-500 mt-1">
-                    This volunteer leads a team with <strong>{memberCount} member{memberCount !== 1 ? "s" : ""}</strong>. What should happen to the team members?
+                  <p className="text-sm text-gray-600 mt-1">
+                    <strong>{vol.name}</strong> leads a team with <strong>{memberCount} other member{memberCount !== 1 ? "s" : ""}</strong>.
+                  </p>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Do you also want to <strong>permanently remove those {memberCount} team member{memberCount !== 1 ? "s" : ""} from the volunteer roster entirely</strong>?
                   </p>
                 </div>
+              </div>
+              <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2 mb-4 text-xs text-red-700">
+                ⚠️ This cannot be undone. Deleted volunteers are removed from all shifts, teams, and the roster permanently.
               </div>
               <div className="space-y-3">
                 <button
@@ -3020,8 +3026,10 @@ export default function AdminDashboard() {
                 >
                   <span className="text-lg leading-none">👥</span>
                   <div>
-                    <div>Delete Team Leader + All {memberCount} Member{memberCount !== 1 ? "s" : ""}</div>
-                    <div className="font-normal text-red-200 text-xs mt-0.5">Removes the team lead and all team members from the volunteer list, including any shift assignments.</div>
+                    <div>Yes — Delete Team Leader + Remove All {memberCount} Member{memberCount !== 1 ? "s" : ""} from Roster</div>
+                    <div className="font-normal text-red-200 text-xs mt-0.5">
+                      Permanently deletes {vol.name} and all {memberCount} team member{memberCount !== 1 ? "s" : ""} from the volunteer roster. They will no longer appear anywhere in the system.
+                    </div>
                   </div>
                 </button>
                 <button
@@ -3030,8 +3038,10 @@ export default function AdminDashboard() {
                 >
                   <span className="text-lg leading-none">👤</span>
                   <div>
-                    <div>Delete Team Leader Only</div>
-                    <div className="font-normal text-amber-700 text-xs mt-0.5">Removes only {vol.name}. Team members stay on the volunteer list.</div>
+                    <div>No — Delete Team Leader Only, Keep Members on Roster</div>
+                    <div className="font-normal text-amber-700 text-xs mt-0.5">
+                      Removes only {vol.name}. The {memberCount} team member{memberCount !== 1 ? "s" : ""} stay on the volunteer roster as regular volunteers.
+                    </div>
                   </div>
                 </button>
                 <button
