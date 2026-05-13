@@ -118,6 +118,9 @@ export default function AdminDashboard() {
   // Deny-team-lead confirmation modal
   const [denyTeamModal, setDenyTeamModal] = useState<{ id: string; name: string } | null>(null);
 
+  // Delete volunteer modal (shown when the volunteer leads a team)
+  const [deleteVolModal, setDeleteVolModal] = useState<{ vol: Volunteer; memberCount: number } | null>(null);
+
   // Volunteer detail modal
   const [viewingVolunteer, setViewingVolunteer] = useState<(Volunteer & { assignments?: Assignment[] }) | null>(null);
   // Manage assignments modal
@@ -788,6 +791,19 @@ export default function AdminDashboard() {
   };
 
   const handleDeleteVolunteer = (v: Volunteer) => {
+    // If this volunteer leads a team with members, show the specialized modal
+    const ledTeams = teams.filter((t) => t.leader.id === v.id);
+    const memberCount = ledTeams.reduce((sum, t) => {
+      // Don't count the leader themselves (they appear as a team member too)
+      return sum + t.members.filter((m) => m.volunteer.id !== v.id).length;
+    }, 0);
+
+    if (memberCount > 0) {
+      setDeleteVolModal({ vol: v, memberCount });
+      return;
+    }
+
+    // No team members — use the simple confirm dialog
     showConfirm(
       `Delete ${v.name}? This will remove all their assignments, pair requests, and team memberships. This cannot be undone.`,
       async () => {
@@ -2874,6 +2890,74 @@ export default function AdminDashboard() {
           </div>
         </div>
       )}
+
+      {/* ========= DELETE VOLUNTEER (TEAM LEADER) MODAL ========= */}
+      {deleteVolModal && (() => {
+        const { vol, memberCount } = deleteVolModal;
+        const doDelete = async (deleteTeamMembers: boolean) => {
+          setDeleteVolModal(null);
+          clearMessages();
+          const res = await fetch("/api/volunteers", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: vol.id, deleteTeamMembers }),
+          });
+          if (res.ok) {
+            setSuccess(
+              deleteTeamMembers
+                ? `${vol.name} and all ${memberCount} team member${memberCount !== 1 ? "s" : ""} have been deleted.`
+                : `${vol.name} has been deleted. Team members remain on the volunteer list.`
+            );
+            loadData();
+          } else {
+            const data = await res.json();
+            setError(data.error || "Failed to delete volunteer.");
+          }
+        };
+        return (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setDeleteVolModal(null)}>
+            <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start gap-3 mb-4">
+                <span className="text-3xl">🗑️</span>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Delete {vol.name}?</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    This volunteer leads a team with <strong>{memberCount} member{memberCount !== 1 ? "s" : ""}</strong>. What should happen to the team members?
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <button
+                  onClick={() => doDelete(true)}
+                  className="w-full bg-red-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-red-700 transition-colors text-sm text-left flex items-start gap-3"
+                >
+                  <span className="text-lg leading-none">👥</span>
+                  <div>
+                    <div>Delete Team Leader + All {memberCount} Member{memberCount !== 1 ? "s" : ""}</div>
+                    <div className="font-normal text-red-200 text-xs mt-0.5">Removes the team lead and all team members from the volunteer list, including any shift assignments.</div>
+                  </div>
+                </button>
+                <button
+                  onClick={() => doDelete(false)}
+                  className="w-full bg-amber-50 border border-amber-300 text-amber-900 py-3 px-4 rounded-lg font-semibold hover:bg-amber-100 transition-colors text-sm text-left flex items-start gap-3"
+                >
+                  <span className="text-lg leading-none">👤</span>
+                  <div>
+                    <div>Delete Team Leader Only</div>
+                    <div className="font-normal text-amber-700 text-xs mt-0.5">Removes only {vol.name}. Team members stay on the volunteer list.</div>
+                  </div>
+                </button>
+                <button
+                  onClick={() => setDeleteVolModal(null)}
+                  className="w-full text-gray-500 text-sm hover:text-gray-700 py-2 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ========= VOLUNTEER DETAIL MODAL ========= */}
       {viewingVolunteer && (
