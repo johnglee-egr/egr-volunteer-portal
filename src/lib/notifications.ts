@@ -52,10 +52,13 @@ export async function sendEmail(
     return { success: true, mock: true };
   }
 
+  const port = parseInt(process.env.SMTP_PORT || "587");
   const transporter = nodemailer.createTransport({
     host,
-    port: parseInt(process.env.SMTP_PORT || "587"),
+    port,
+    secure: port === 465, // SSL for 465, STARTTLS for 587
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    tls: { rejectUnauthorized: false },
   });
 
   try {
@@ -82,6 +85,7 @@ export async function sendEmail(
     });
     return { success: true };
   } catch (error) {
+    console.error("[SMTP ERROR]", error);
     await prisma.notification.create({
       data: { type: "email", recipient: to, subject, message, status: "failed" },
     });
