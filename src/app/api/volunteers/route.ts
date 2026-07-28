@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
+import { normalizePhone } from "@/lib/formatters";
 
 export async function GET(req: NextRequest) {
   const search = req.nextUrl.searchParams.get("search");
@@ -23,7 +24,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const data = await req.json();
-  const { name, email, phone, contactPref, isOver21 } = data;
+  const { name, email, contactPref, isOver21 } = data;
+  const phone = data.phone ? normalizePhone(data.phone) : data.phone;
 
   if (!name) {
     return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -126,7 +128,7 @@ export async function PUT(req: NextRequest) {
   if (role !== undefined) updateData.role = role;
   if (name !== undefined) updateData.name = name;
   if (email !== undefined) updateData.email = email;
-  if (phone !== undefined) updateData.phone = phone;
+  if (phone !== undefined) updateData.phone = phone ? normalizePhone(phone as string) : phone;
   if (isOver21 !== undefined) updateData.isOver21 = isOver21 === true ? true : isOver21 === false ? false : null;
   // Approve pending role: promote to role and clear pendingRole
   if (approvePendingRole) { updateData.role = approvePendingRole; updateData.pendingRole = null; }

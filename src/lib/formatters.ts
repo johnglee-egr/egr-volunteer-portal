@@ -27,3 +27,14 @@ export function formatPhone(phone: string): string {
   if (d.length === 10) return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
   return phone;
 }
+
+/** Normalize a phone number to (xxx) xxx-xxxx for storage, or return as-is if unrecognized */
+export function normalizePhone(phone: string): string {
+  return formatPhone(phone);
+}
+
+/** Strip all non-digit characters — use for format-agnostic phone comparison */
+export function phoneDigits(phone: string): string {
+  const d = phone.replace(/\D/g, "");
+  return d.startsWith("1") && d.length === 11 ? d.slice(1) : d;
+}
