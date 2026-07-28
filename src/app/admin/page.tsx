@@ -2016,15 +2016,15 @@ export default function AdminDashboard() {
 
           {/* Bulk-assign action bar (visible when volunteers are selected) */}
           {selectedVolIds.size > 0 && (
-            <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 mb-4 flex flex-wrap items-center gap-3">
-              <span className="text-sm font-medium text-amber-900">
+            <div className="bg-amber-50 border border-amber-300 rounded-lg p-2 mb-4 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-amber-900">
                 {selectedVolIds.size} selected
               </span>
-              <span className="text-gray-400 text-sm">→</span>
+              <span className="text-gray-400 text-xs">→</span>
               <select
                 value={bulkAssignShiftId}
                 onChange={(e) => setBulkAssignShiftId(e.target.value)}
-                className="border border-amber-300 rounded px-2 py-1 text-sm bg-white"
+                className="border border-amber-300 rounded px-2 py-1 text-xs bg-white"
               >
                 <option value="">Pick a shift…</option>
                 {[...shifts]
@@ -2065,11 +2065,11 @@ export default function AdminDashboard() {
                     setError(data.error || "Bulk assign failed.");
                   }
                 }}
-                className="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+                className="bg-green-600 text-white px-2 py-1 rounded text-xs font-medium hover:bg-green-700 disabled:opacity-50"
               >
                 Assign to Shift
               </button>
-              <span className="text-gray-300 text-sm">|</span>
+              <span className="text-gray-300 text-xs">|</span>
               {Array.from(selectedVolIds).some((id) => isPaired(id)) && (
                 <button
                   onClick={() => {
@@ -2101,7 +2101,7 @@ export default function AdminDashboard() {
                       "Yes, Separate"
                     );
                   }}
-                  className="bg-purple-100 text-purple-700 px-3 py-1.5 rounded text-sm font-medium hover:bg-purple-200"
+                  className="bg-purple-100 text-purple-700 px-2 py-1 rounded text-xs font-medium hover:bg-purple-200"
                 >
                   🔗 Separate Partners
                 </button>
@@ -2135,13 +2135,13 @@ export default function AdminDashboard() {
                     "Yes, Delete"
                   );
                 }}
-                className="bg-red-100 text-red-700 px-3 py-1.5 rounded text-sm font-medium hover:bg-red-200"
+                className="bg-red-100 text-red-700 px-2 py-1 rounded text-xs font-medium hover:bg-red-200"
               >
                 🗑 Delete Selected
               </button>
               <button
                 onClick={() => setSelectedVolIds(new Set())}
-                className="text-gray-600 hover:text-gray-800 text-sm"
+                className="text-gray-600 hover:text-gray-800 text-xs"
               >
                 Clear
               </button>
