@@ -852,15 +852,15 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${r.name}</td><td>${r.shifts.
                 </div>
               ))}
               <p className="text-xs text-gray-400 mb-1">Check &quot;21+&quot; for members who are 21 or older (required for pouring roles).</p>
-              <button
-                onClick={() => setNewTeamMembers([...newTeamMembers, { name: "", isOver21: null }])}
-                className="text-teal-700 text-sm font-medium hover:text-teal-900 mt-1"
-              >
-                + Add Another Member
-              </button>
             </div>
 
             {/* Actions */}
+            <button
+              onClick={() => setNewTeamMembers([...newTeamMembers, { name: "", isOver21: null }])}
+              className="w-full bg-amber-600 text-white py-2.5 rounded-lg font-semibold hover:bg-amber-700 transition-colors"
+            >
+              + Add Another Member
+            </button>
             <button
               onClick={handleCreateTeam}
               disabled={!newTeamName.trim()}
