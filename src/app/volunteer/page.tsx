@@ -109,6 +109,10 @@ export default function VolunteerPortal() {
   // My Team tab sub-view
   const [teamSubTab, setTeamSubTab] = useState<"roster" | "schedule">("roster");
 
+  // Inline confirm for removing a member from the team (matches the "Remove Me"
+  // pattern used on shifts — the app uses no native browser dialogs anywhere else)
+  const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
+
   useEffect(() => {
     fetch("/api/shifts").then((r) => r.json()).then(setShifts);
   }, []);
@@ -1742,24 +1746,38 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                               {isOver && dragShiftId && <span className="text-teal-600 text-xs ml-1">← drop here</span>}
                             </div>
                             {!isLeader && (
-                              <button
-                                onClick={async () => {
-                                  const shiftCount = memberShifts.length;
-                                  const warning = shiftCount > 0
-                                    ? `Remove ${tm.volunteer.name} from ${team.name}? This also frees the ${shiftCount} shift${shiftCount !== 1 ? "s" : ""} you assigned them.`
-                                    : `Remove ${tm.volunteer.name} from ${team.name}?`;
-                                  if (!window.confirm(warning)) return;
-                                  await fetch("/api/teams", {
-                                    method: "PUT",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ id: team.id, removeMembers: [tm.volunteer.id], requesterId: volunteer?.id }),
-                                  });
-                                  setSuccess(`${tm.volunteer.name} removed from ${team.name}.`);
-                                  refreshData();
-                                }}
-                                className="text-red-400 hover:text-red-600 text-xs font-medium shrink-0"
-                                title="Remove this person from the team entirely"
-                              >Remove from team</button>
+                              removingMemberId === tm.volunteer.id ? (
+                                <span className="flex items-center gap-1.5 shrink-0">
+                                  <span className="text-xs text-gray-600">
+                                    {memberShifts.length > 0
+                                      ? `Remove & free ${memberShifts.length} shift${memberShifts.length !== 1 ? "s" : ""}?`
+                                      : "Remove from team?"}
+                                  </span>
+                                  <button
+                                    onClick={async () => {
+                                      setRemovingMemberId(null);
+                                      await fetch("/api/teams", {
+                                        method: "PUT",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ id: team.id, removeMembers: [tm.volunteer.id], requesterId: volunteer?.id }),
+                                      });
+                                      setSuccess(`${tm.volunteer.name} removed from ${team.name}.`);
+                                      refreshData();
+                                    }}
+                                    className="bg-red-600 text-white px-2 py-0.5 rounded text-xs font-medium hover:bg-red-700"
+                                  >Yes, remove</button>
+                                  <button
+                                    onClick={() => setRemovingMemberId(null)}
+                                    className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs font-medium hover:bg-gray-200"
+                                  >Keep</button>
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => setRemovingMemberId(tm.volunteer.id)}
+                                  className="text-red-400 hover:text-red-600 text-xs font-medium shrink-0"
+                                  title="Remove this person from the team entirely"
+                                >Remove from team</button>
+                              )
                             )}
                           </div>
                           {memberShifts.length > 0 && (
