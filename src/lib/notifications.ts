@@ -164,7 +164,7 @@ export function applyMerge(
 // ── Standard shift reminder (used by scheduler + manual shift buttons) ───────
 
 export async function sendReminder(
-  volunteer: { name: string; email?: string | null; phone?: string | null; contactPref?: string | null },
+  volunteer: { name: string; email?: string | null; phone?: string | null; contactPref?: string | null; smsConsent?: boolean | null; smsOptOutAt?: Date | null },
   shift: { title: string; date: Date; startTime: string; endTime: string },
   /** Assignment ID — enables calendar invite attachments + download links */
   assignmentId?: string
@@ -189,10 +189,13 @@ export async function sendReminder(
 
   const message = applyMerge(templateBody, volunteer, shift);
 
-  // Determine which channels to use based on the volunteer's preference
+  // Determine which channels to use based on the volunteer's preference.
+  // SMS additionally requires a recorded A2P 10DLC opt-in that has not been
+  // revoked by a STOP reply — preference alone is never sufficient consent.
   const pref = volunteer.contactPref || "both";
+  const smsAllowed = volunteer.smsConsent === true && !volunteer.smsOptOutAt;
   const wantEmail = (pref === "both" || pref === "email") && !!volunteer.email;
-  const wantSMS   = (pref === "both" || pref === "sms")   && !!volunteer.phone;
+  const wantSMS   = (pref === "both" || pref === "sms")   && !!volunteer.phone && smsAllowed;
 
   // Build calendar helpers when we have an assignment ID
   let cal: EmailCalendarOptions | undefined;
@@ -314,14 +317,18 @@ export async function sendToGroup(templateId: string, groupType: string, groupVa
     const body = applyMerge(template.body, vol, shift);
     const subject = applyMerge(template.subject || "EGR Harvest + Beer Festival", vol, shift);
 
-    // Intersect template channel with the volunteer's own contact preference
-    const pref = (vol as { contactPref?: string | null }).contactPref || "both";
+    // Intersect template channel with the volunteer's own contact preference.
+    // SMS also requires a recorded, un-revoked A2P 10DLC opt-in.
+    const v = vol as { contactPref?: string | null; smsConsent?: boolean | null; smsOptOutAt?: Date | null };
+    const pref = v.contactPref || "both";
+    const smsAllowed = v.smsConsent === true && !v.smsOptOutAt;
     const canEmail = (template.channel === "email" || template.channel === "both")
                   && (pref === "email" || pref === "both")
                   && !!vol.email;
     const canSMS   = (template.channel === "sms"   || template.channel === "both")
                   && (pref === "sms"   || pref === "both")
-                  && !!vol.phone;
+                  && !!vol.phone
+                  && smsAllowed;
 
     if (!canEmail && !canSMS) continue; // no reachable contact — skip silently
     reachable++;

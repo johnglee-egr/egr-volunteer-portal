@@ -35,6 +35,17 @@ interface Team {
   members: TeamMember[];
 }
 
+// A2P 10DLC compliance constants. The plain-text version is stored with each
+// volunteer's consent record so we can show a carrier exactly what was agreed to.
+const SMS_PRIVACY_URL = "https://www.egrharvestfest.com/privacy-policy.html";
+const SMS_TERMS_URL = "https://www.egrharvestfest.com/terms-and-conditions.html";
+const SMS_CONSENT_TEXT =
+  "Yes, text me shift reminders. I agree to receive recurring automated SMS text " +
+  "messages from the EGR Harvest + Beer Festival about my volunteer shifts at the " +
+  "number provided. Message frequency varies (about 5-10 messages per festival " +
+  "season). Message and data rates may apply. Reply STOP to cancel, HELP for help. " +
+  `Terms: ${SMS_TERMS_URL} Privacy: ${SMS_PRIVACY_URL}`;
+
 interface Volunteer {
   id: string;
   name: string;
@@ -64,6 +75,9 @@ export default function VolunteerPortal() {
 
   // Contact preference (shown during registration when both email + phone are provided)
   const [contactPref, setContactPref] = useState<"both" | "email" | "sms">("both");
+
+  // A2P 10DLC SMS opt-in. Must default to false — pre-checked consent is non-compliant.
+  const [smsConsent, setSmsConsent] = useState(false);
 
   // 21+ age verification (required for certain shifts like pouring)
   const [isOver21, setIsOver21] = useState<boolean | null>(null);
@@ -162,9 +176,13 @@ export default function VolunteerPortal() {
         email: email || null,
         phone: phone || null,
         role: registerAsTeamLead ? "team_lead" : "volunteer",
-        // Only send contactPref when both channels are provided; otherwise it's implied
-        contactPref: (email && phone) ? contactPref : (email ? "email" : "sms"),
+        // Contact preference can never imply SMS without an explicit opt-in.
+        contactPref: smsConsent
+          ? ((email && phone) ? contactPref : (email ? "email" : "sms"))
+          : "email",
         isOver21,
+        smsConsent,
+        smsConsentText: smsConsent ? SMS_CONSENT_TEXT : null,
       }),
     });
     setRegisterLoading(false);
@@ -661,6 +679,44 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                 </div>
               </div>
             )}
+
+            {/* SMS consent — A2P 10DLC requires an affirmative, unchecked-by-default
+                opt-in with frequency, rates, opt-out and links to both legal pages. */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={smsConsent}
+                  onChange={(e) => setSmsConsent(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 accent-blue-600 shrink-0"
+                />
+                <span className="text-sm text-gray-800 leading-snug">
+                  Yes, text me shift reminders. I agree to receive recurring automated SMS
+                  text messages from the EGR Harvest + Beer Festival about my volunteer
+                  shifts at the number provided. Message frequency varies (about 5&ndash;10
+                  messages per festival season). Message and data rates may apply. Reply
+                  STOP to cancel, HELP for help. See our{" "}
+                  <a
+                    href={SMS_TERMS_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-700 underline font-medium"
+                    onClick={(e) => e.stopPropagation()}
+                  >Terms &amp; Conditions</a>{" "}and{" "}
+                  <a
+                    href={SMS_PRIVACY_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-700 underline font-medium"
+                    onClick={(e) => e.stopPropagation()}
+                  >Privacy Policy</a>.
+                </span>
+              </label>
+              <p className="text-xs text-gray-500 mt-2 ml-7">
+                Consent is not a condition of volunteering. Leave this unchecked and we&apos;ll
+                email you instead.
+              </p>
+            </div>
 
             {/* 21+ age verification */}
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-2">

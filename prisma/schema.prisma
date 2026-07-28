@@ -16,6 +16,12 @@ model Volunteer {
   pendingRole      String?               // role awaiting admin approval e.g. "team_lead"
   contactPref      String                @default("both") // both | email | sms
   isOver21         Boolean?              // null = not answered, true = yes, false = no
+  // A2P 10DLC consent audit trail. Carriers can require proof of opt-in, so we
+  // record whether consent was given, when, and the exact wording shown.
+  smsConsent       Boolean               @default(false)
+  smsConsentAt     DateTime?
+  smsConsentText   String?
+  smsOptOutAt      DateTime?             // set when the volunteer replies STOP
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
   assignments      Assignment[]

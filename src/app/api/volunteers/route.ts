@@ -63,15 +63,23 @@ export async function POST(req: NextRequest) {
   // isOver21: accept true/false; null means not answered
   const resolvedIsOver21 = isOver21 === true ? true : isOver21 === false ? false : null;
 
+  // A2P 10DLC: only record consent when the client affirmatively sent it, and
+  // stamp the time server-side so the audit trail can't be back-dated.
+  const smsConsent = data.smsConsent === true;
+
   const volunteer = await prisma.volunteer.create({
     data: {
       name,
       email: email || null,
       phone: phone || null,
-      contactPref: resolvedPref,
+      // Never route SMS to someone who did not opt in
+      contactPref: smsConsent ? resolvedPref : "email",
       role: "volunteer",
       pendingRole: wantsTeamLead ? "team_lead" : null,
       isOver21: resolvedIsOver21,
+      smsConsent,
+      smsConsentAt: smsConsent ? new Date() : null,
+      smsConsentText: smsConsent ? (data.smsConsentText || null) : null,
     },
   });
   return NextResponse.json(volunteer, { status: 201 });
