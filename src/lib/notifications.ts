@@ -222,7 +222,11 @@ export async function sendReminder(
     results.push(await sendEmail(volunteer.email!, templateSubject, message, cal));
   }
   if (wantSMS) {
-    results.push(await sendSMS(volunteer.phone!, message + smsCalLine));
+    // Carrier guidance: identify the brand and carry opt-out language in the
+    // message body. Only appended when not already present in the template.
+    const needsOptOut = !/reply\s+stop/i.test(message);
+    const optOut = needsOptOut ? "\n\nReply STOP to opt out, HELP for help." : "";
+    results.push(await sendSMS(volunteer.phone!, message + smsCalLine + optOut));
   }
   return results;
 }
