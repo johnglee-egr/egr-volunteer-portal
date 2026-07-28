@@ -1082,6 +1082,24 @@ export default function AdminDashboard() {
   // Check if a volunteer is paired with anyone (approved pair request)
   const isPaired = (volunteerId: string): boolean => getApprovedPartnerIds(volunteerId).length > 0;
 
+  // Dissolve all approved partnerships for a volunteer
+  const handleSplitPartner = async (volunteerId: string) => {
+    const toSplit = pairRequests.filter(
+      (pr) => pr.status === "approved" && (pr.requester.id === volunteerId || pr.partner.id === volunteerId)
+    );
+    await Promise.all(
+      toSplit.map((pr) =>
+        fetch("/api/pair-requests", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: pr.id, status: "denied" }),
+        })
+      )
+    );
+    await loadData();
+    setSuccess("Partnership dissolved.");
+  };
+
   // Pair requests
   const handlePairAction = async (id: string, status: string) => {
     await fetch("/api/pair-requests", {
@@ -2380,6 +2398,11 @@ export default function AdminDashboard() {
                               return (
                                 <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-800 text-xs px-2 py-0.5 rounded-full font-medium">
                                   🔗 Partnered w/ {partnerNames}
+                                  <button
+                                    onClick={() => showConfirm(`Split the partnership between ${v.name} and ${partnerNames}?`, () => handleSplitPartner(v.id))}
+                                    className="ml-1 text-purple-500 hover:text-red-600 font-bold leading-none"
+                                    title="Split partnership"
+                                  >✕</button>
                                 </span>
                               );
                             }

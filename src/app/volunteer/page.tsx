@@ -24,7 +24,7 @@ interface Assignment {
 
 interface TeamMember {
   id: string;
-  volunteer: { id: string; name: string; email?: string; phone?: string; assignments?: Assignment[] };
+  volunteer: { id: string; name: string; email?: string; phone?: string; assignments?: Assignment[]; role?: string };
 }
 
 interface Team {
@@ -1357,15 +1357,44 @@ export default function VolunteerPortal() {
               )}
 
               {/* Team Members */}
-              <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2">
+              <div className="space-y-2">
                 {team.members.map((tm) => {
                   const isLeader = tm.volunteer.id === volunteer?.id;
+                  const memberShifts = (tm.volunteer.assignments || []).filter((a) => a.status === "confirmed");
                   return (
                     <div key={tm.id} className={`rounded-lg p-3 text-sm ${isLeader ? "bg-teal-50 border border-teal-200" : "bg-gray-50 border border-gray-200"}`}>
-                      <div className="flex items-center gap-1 font-medium">
-                        {isLeader && <span className="text-teal-600 text-xs font-bold">TL</span>}
-                        {tm.volunteer.name}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1 font-medium">
+                          {isLeader && <span className="text-teal-600 text-xs font-bold">TL</span>}
+                          {tm.volunteer.name}
+                        </div>
+                        {!isLeader && (
+                          <button
+                            onClick={async () => {
+                              await fetch("/api/teams", {
+                                method: "PUT",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ id: team.id, removeMembers: [tm.volunteer.id], requesterId: volunteer?.id }),
+                              });
+                              refreshData();
+                            }}
+                            className="text-red-400 hover:text-red-600 text-xs font-medium shrink-0"
+                            title="Remove from team"
+                          >Remove</button>
+                        )}
                       </div>
+                      {memberShifts.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                          {memberShifts.map((a) => (
+                            <span key={a.id} className="text-xs bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full">
+                              {a.shift.title} {fmt12(a.shift.startTime)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {memberShifts.length === 0 && !isLeader && (
+                        <p className="text-xs text-gray-400 mt-1">No shifts assigned</p>
+                      )}
                     </div>
                   );
                 })}
@@ -1382,7 +1411,7 @@ export default function VolunteerPortal() {
                       await fetch("/api/teams", {
                         method: "PUT",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ id: team.id, addMembers: [{ name: memberName }] }),
+                        body: JSON.stringify({ id: team.id, addMembers: [{ name: memberName }], requesterId: volunteer?.id }),
                       });
                       (e.target as HTMLInputElement).value = "";
                       refreshData();

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requireAdmin, isAdmin } from "@/lib/auth";
 
 const teamInclude = {
   leader: true,
@@ -79,10 +79,22 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   try {
     const body = await req.json();
     const { id, name, addMembers, removeMembers, assignShiftId, assignCategoryId, spreadAcrossShifts } = body;
+
+    // Allow team leaders to manage their own team members without admin auth.
+    // All other operations (rename, shift assignment, spread) require admin.
+    const callerIsAdmin = await isAdmin();
+    const teamLeaderOnly = !callerIsAdmin && (addMembers || removeMembers) && !name && !assignShiftId && !assignCategoryId && !spreadAcrossShifts;
+    if (teamLeaderOnly) {
+      const team = await prisma.team.findUnique({ where: { id } });
+      if (!team || team.leaderId !== body.requesterId) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    } else if (!callerIsAdmin) {
+      const unauthed = await requireAdmin(); if (unauthed) return unauthed;
+    }
 
     // Rename team
     if (name) {
