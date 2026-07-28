@@ -41,6 +41,7 @@ interface Volunteer {
   email?: string;
   phone?: string;
   role?: string;
+  pendingRole?: string | null;
   assignments: Assignment[];
   pairRequests: { id: string; status: string; partner: { name: string } }[];
 }
@@ -893,6 +894,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${r.name}</td><td>${r.shifts.
           <h1 className="text-3xl font-bold text-amber-900">
             Welcome, {volunteer?.name}!
             {volunteer?.role === "team_lead" && <span className="ml-2 text-sm bg-teal-100 text-teal-800 px-2 py-1 rounded-full align-middle">Team Captain</span>}
+            {volunteer?.role !== "team_lead" && volunteer?.pendingRole === "team_lead" && <span className="ml-2 text-sm bg-amber-100 text-amber-800 px-2 py-1 rounded-full align-middle">Team Captain — pending approval</span>}
           </h1>
           <p className="text-gray-600 mt-1">
             {volunteer?.assignments.filter((a) => a.status === "confirmed").length || 0} active assignment(s)
@@ -1047,7 +1049,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${r.name}</td><td>${r.shifts.
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 bg-amber-100 rounded-lg p-1">
-        {(volunteer?.role === "team_lead" || myTeams.length > 0 ? ["shifts", "my-schedule", "my-team"] as const : ["shifts", "my-schedule"] as const).map((tab) => (
+        {(volunteer?.role === "team_lead" || volunteer?.pendingRole === "team_lead" || myTeams.length > 0 ? ["shifts", "my-schedule", "my-team"] as const : ["shifts", "my-schedule"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -1468,7 +1470,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${r.name}</td><td>${r.shifts.
       })()}
 
       {/* ========= MY TEAM TAB ========= */}
-      {activeTab === "my-team" && (volunteer?.role === "team_lead" || myTeams.length > 0) && (
+      {activeTab === "my-team" && (volunteer?.role === "team_lead" || volunteer?.pendingRole === "team_lead" || myTeams.length > 0) && (
         <div>
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-bold text-teal-900">My Teams</h2>

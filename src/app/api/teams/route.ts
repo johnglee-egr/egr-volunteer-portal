@@ -27,12 +27,29 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   try {
     const { name, leaderId, memberNames } = await req.json();
 
     if (!name || !leaderId) {
       return NextResponse.json({ error: "Team name and leader required." }, { status: 400 });
+    }
+
+    // A volunteer may create the team they themselves lead (the "Build Your Team"
+    // flow runs without an admin session). Anything else still requires admin.
+    const callerIsAdmin = await isAdmin();
+    if (!callerIsAdmin) {
+      const leader = await prisma.volunteer.findUnique({ where: { id: leaderId } });
+      if (!leader) {
+        return NextResponse.json({ error: "Leader volunteer not found." }, { status: 404 });
+      }
+      // Don't let one volunteer stack up unlimited teams under their own name
+      const existing = await prisma.team.count({ where: { leaderId } });
+      if (existing >= 5) {
+        return NextResponse.json(
+          { error: "You already lead the maximum number of teams." },
+          { status: 403 }
+        );
+      }
     }
 
     // Create volunteer records for members (name only)
