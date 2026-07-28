@@ -235,7 +235,7 @@ export default function VolunteerPortal() {
   const handlePairRequest = async () => {
     if (!volunteer || !partnerName) return;
     if (registerPartner && !partnerPhone) {
-      setError("A phone number is required to register your partner so we can send them shift reminders.");
+      setError("Please enter your partner's phone number so we can register them and send shift reminders.");
       return;
     }
     setError("");
@@ -246,8 +246,8 @@ export default function VolunteerPortal() {
       body: JSON.stringify({
         requesterId: volunteer.id,
         partnerName,
+        partnerPhone: partnerPhone || null,
         partnerEmail: registerPartner ? partnerEmail || null : null,
-        partnerPhone: registerPartner ? partnerPhone || null : null,
         partnerIsOver21: registerPartner ? partnerIsOver21 : undefined,
         message: pairMessage || null,
       }),
@@ -845,15 +845,26 @@ export default function VolunteerPortal() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Message (optional)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Partner&apos;s Phone</label>
               <input
-                type="text"
-                value={pairMessage}
-                onChange={(e) => setPairMessage(e.target.value)}
+                type="tel"
+                value={partnerPhone}
+                onChange={(e) => setPartnerPhone(fmtPhoneInput(e.target.value))}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-400 outline-none"
-                placeholder="We'd like to work the beer tent together"
+                placeholder="555-123-4567"
               />
+              <p className="text-xs text-gray-400 mt-1">Helps us find them if they&apos;re already registered</p>
             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Message (optional)</label>
+            <input
+              type="text"
+              value={pairMessage}
+              onChange={(e) => setPairMessage(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-400 outline-none"
+              placeholder="We'd like to work the beer tent together"
+            />
           </div>
 
           {/* Register new partner toggle & fields */}
@@ -871,32 +882,17 @@ export default function VolunteerPortal() {
 
           {registerPartner && (
             <div className="mt-3 bg-white border border-purple-200 rounded-lg p-4 space-y-3">
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Partner&apos;s Phone <span className="text-red-600">*</span>
-                  </label>
-                  <input
-                    type="tel"
-                    value={partnerPhone}
-                    onChange={(e) => setPartnerPhone(fmtPhoneInput(e.target.value))}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-400 outline-none"
-                    placeholder="555-123-4567"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Partner&apos;s Email <span className="text-gray-400 font-normal">(optional)</span>
-                  </label>
-                  <input
-                    type="email"
-                    value={partnerEmail}
-                    onChange={(e) => setPartnerEmail(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-400 outline-none"
-                    placeholder="partner@example.com"
-                  />
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Partner&apos;s Email <span className="text-gray-400 font-normal">(optional)</span>
+                </label>
+                <input
+                  type="email"
+                  value={partnerEmail}
+                  onChange={(e) => setPartnerEmail(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-400 outline-none"
+                  placeholder="partner@example.com"
+                />
               </div>
               {/* Partner 21+ verification */}
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
@@ -916,7 +912,7 @@ export default function VolunteerPortal() {
                   </label>
                 </div>
               </div>
-              <p className="text-xs text-gray-500">Phone is required so we can text your partner shift reminders. This creates a volunteer account for them.</p>
+              <p className="text-xs text-gray-500">Adding an email lets us send your partner a calendar invite. This creates a volunteer account for them.</p>
             </div>
           )}
 

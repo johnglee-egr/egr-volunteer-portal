@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdmin, isAdmin } from "@/lib/auth";
+import { phoneDigits, normalizePhone } from "@/lib/formatters";
 
 export async function GET() {
   const requests = await prisma.pairRequest.findMany({
@@ -27,42 +28,40 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Partner volunteer not found." }, { status: 404 });
     }
   } else {
-    // Find partner by name
-    partner = await prisma.volunteer.findFirst({
-      where: { name: { equals: partnerName } },
-    });
+    // 1. If a phone was provided, try to match an existing volunteer by phone first
+    //    (digits-only so any format works; name may be misspelled)
+    if (partnerPhone) {
+      const inputDigits = phoneDigits(partnerPhone);
+      const allWithPhone = await prisma.volunteer.findMany({ where: { phone: { not: null } } });
+      partner = allWithPhone.find((v) => v.phone && phoneDigits(v.phone) === inputDigits) ?? null;
+    }
 
-    // If partner doesn't exist, create them — phone is required for reminders
+    // 2. Fall back to exact name lookup if phone didn't match
+    if (!partner && partnerName) {
+      partner = await prisma.volunteer.findFirst({
+        where: { name: { equals: partnerName, mode: "insensitive" } },
+      });
+    }
+
+    // 3. Still not found — create a new volunteer (phone required for reminders)
     if (!partner) {
       if (!partnerPhone) {
         return NextResponse.json(
-          { error: `Could not find volunteer named "${partnerName}". Please provide their phone number (required) so we can register them.` },
+          { error: `Could not find a volunteer matching "${partnerName}". Please provide their phone number so we can register them.` },
           { status: 404 }
         );
       }
-
-      // Check if a volunteer already exists with same name + same phone
-      partner = await prisma.volunteer.findFirst({
-        where: {
-          name: { equals: partnerName },
-          phone: { equals: partnerPhone },
+      const partnerContactPref = partnerEmail && partnerPhone ? "both" : partnerEmail ? "email" : "sms";
+      const resolvedPartnerIsOver21 = partnerIsOver21 === true ? true : partnerIsOver21 === false ? false : null;
+      partner = await prisma.volunteer.create({
+        data: {
+          name: partnerName,
+          email: partnerEmail || null,
+          phone: normalizePhone(partnerPhone),
+          contactPref: partnerContactPref,
+          isOver21: resolvedPartnerIsOver21,
         },
       });
-
-      if (!partner) {
-        // Infer contactPref from which channels were provided
-        const partnerContactPref = partnerEmail && partnerPhone ? "both" : partnerEmail ? "email" : "sms";
-        const resolvedPartnerIsOver21 = partnerIsOver21 === true ? true : partnerIsOver21 === false ? false : null;
-        partner = await prisma.volunteer.create({
-          data: {
-            name: partnerName,
-            email: partnerEmail || null,
-            phone: partnerPhone,
-            contactPref: partnerContactPref,
-            isOver21: resolvedPartnerIsOver21,
-          },
-        });
-      }
     }
   }
 
