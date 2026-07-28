@@ -137,20 +137,68 @@ async function volunteerExport(volunteerId: string, format: string) {
 
 // ── All volunteers contact list
 async function volunteersExport(format: string) {
-  const vols = await prisma.volunteer.findMany({
-    orderBy: { name: "asc" },
-    include: { assignments: { where: { status: "confirmed" } } },
+  const [vols, pairRequests, teamMembers] = await Promise.all([
+    prisma.volunteer.findMany({
+      orderBy: { name: "asc" },
+      include: {
+        assignments: {
+          where: { status: "confirmed" },
+          include: { shift: { include: { category: true } } },
+        },
+      },
+    }),
+    prisma.pairRequest.findMany({
+      where: { status: "approved" },
+      include: { requester: true, partner: true },
+    }),
+    prisma.teamMember.findMany({
+      include: { team: true },
+    }),
+  ]);
+
+  // Build partner lookup: volunteerId → partner name
+  const partnerMap = new Map<string, string>();
+  for (const pr of pairRequests) {
+    partnerMap.set(pr.requesterId, pr.partner.name);
+    partnerMap.set(pr.partnerId, pr.requester.name);
+  }
+
+  // Build team lookup: volunteerId → team name
+  const teamMap = new Map<string, string>();
+  for (const tm of teamMembers) {
+    teamMap.set(tm.volunteerId, tm.team.name);
+  }
+
+  // Max shift count across all volunteers (minimum 1 for a consistent schema)
+  const maxShifts = Math.max(1, ...vols.map((v) => v.assignments.length));
+
+  const rows = vols.map((v) => {
+    const sorted = [...v.assignments].sort((a, b) =>
+      a.shift.startTime.localeCompare(b.shift.startTime)
+    );
+
+    const row: Record<string, unknown> = {
+      Name: v.name,
+      Email: v.email || "",
+      Phone: formatPhone(v.phone),
+      Role: v.role === "team_lead" ? "Team Lead" : "Volunteer",
+    };
+
+    for (let i = 0; i < maxShifts; i++) {
+      const a = sorted[i];
+      row[`Shift ${i + 1}`] = a
+        ? `${a.shift.title} (${fmt12(a.shift.startTime)}–${fmt12(a.shift.endTime)})`
+        : "";
+    }
+
+    const partner = partnerMap.get(v.id);
+    const team = teamMap.get(v.id);
+    row["Partner / Team"] = partner ? `Partner: ${partner}` : team ? `Team: ${team}` : "";
+
+    return row;
   });
 
-  const rows = vols.map((v) => ({
-    Name: v.name,
-    Email: v.email || "",
-    Phone: formatPhone(v.phone),
-    Role: v.role === "team_lead" ? "Team Lead" : "Volunteer",
-    Shifts: v.assignments.length,
-  }));
-
-  if (format === "html") return printableHtml("Volunteer Roster", rows);
+  if (format === "html") return printableHtml("Volunteer Roster", rows, [], true);
   return csvResponse("volunteers.csv", rows);
 }
 
@@ -193,7 +241,7 @@ function csvResponse(filename: string, rows: Record<string, unknown>[]): NextRes
   });
 }
 
-function printableHtml(title: string, rows: Record<string, unknown>[], subtitleLines: string[] = []): NextResponse {
+function printableHtml(title: string, rows: Record<string, unknown>[], subtitleLines: string[] = [], landscape = false): NextResponse {
   if (rows.length === 0) {
     return new NextResponse(`<html><body><h1>${title}</h1><p>No data.</p></body></html>`, {
       headers: { "Content-Type": "text/html; charset=utf-8" },
@@ -216,8 +264,17 @@ function printableHtml(title: string, rows: Record<string, unknown>[], subtitleL
   td { padding: 8px 10px; border: 1px solid #fde68a; }
   tr:nth-child(even) td { background: #fffbeb; }
   .footer { margin-top: 20px; font-size: 11px; color: #999; }
-  @media print { body { padding: 10px; } .no-print { display: none; } }
   button { background: #b45309; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: 500; }
+  @media print {
+    ${landscape ? "@page { size: landscape; margin: 1cm; }" : "@page { margin: 1cm; }"}
+    body { padding: 0; }
+    .no-print { display: none; }
+    table { font-size: 10px; width: 100%; table-layout: fixed; }
+    th, td { padding: 5px 6px; word-wrap: break-word; }
+    thead { display: table-header-group; }
+    tfoot { display: table-footer-group; }
+    tr { page-break-inside: avoid; }
+  }
 </style>
 </head><body>
 <div class="no-print" style="margin-bottom:12px;"><button onclick="window.print()">🖨 Print</button></div>
@@ -226,8 +283,8 @@ ${subtitleLines.length ? `<div class="subtitle">${subtitleLines.map(esc).join(" 
 <table>
   <thead><tr>${headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
   <tbody>${rows.map((r) => `<tr>${headers.map((h) => `<td>${esc(r[h])}</td>`).join("")}</tr>`).join("")}</tbody>
+  <tfoot><tr><td colspan="${headers.length}" style="font-size:10px;color:#999;padding-top:8px;">Generated ${new Date().toLocaleString()} • EGR Harvest + Beer Festival Volunteers</td></tr></tfoot>
 </table>
-<div class="footer">Generated ${new Date().toLocaleString()} • EGR Harvest + Beer Festival Volunteers</div>
 </body></html>`;
 
   return new NextResponse(html, {
