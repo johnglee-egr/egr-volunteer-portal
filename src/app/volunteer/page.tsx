@@ -92,6 +92,9 @@ export default function VolunteerPortal() {
   // Tracks whether we're in a "first-time shift selection" session (new signup flow)
   const [isNewSignup, setIsNewSignup] = useState(false);
 
+  // Shift ID pending confirmation after a duplicate-time warning
+  const [dupWarningShiftId, setDupWarningShiftId] = useState<string | null>(null);
+
   // Shift selection drill-down: category → shift
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
@@ -116,6 +119,7 @@ export default function VolunteerPortal() {
     if (res.ok) {
       const data = await res.json();
       setVolunteer(data);
+      setActiveTab("my-schedule");
       setStep("dashboard");
       loadTeams(data.id);
     } else {
@@ -166,10 +170,30 @@ export default function VolunteerPortal() {
     }
   };
 
-  const handleSignUp = async (shiftId: string) => {
+  const timesOverlap = (aStart: string, aEnd: string, bStart: string, bEnd: string) =>
+    aStart < bEnd && bStart < aEnd;
+
+  const handleSignUp = (shiftId: string) => {
     if (!volunteer) return;
     setError("");
     setSuccess("");
+
+    const target = shifts.find((s) => s.id === shiftId);
+    if (target) {
+      const conflict = volunteer.assignments
+        .filter((a) => a.status === "confirmed" || a.status === "pending")
+        .find((a) => timesOverlap(target.startTime, target.endTime, a.shift.startTime, a.shift.endTime));
+      if (conflict) {
+        setDupWarningShiftId(shiftId);
+        return;
+      }
+    }
+    doSignUp(shiftId);
+  };
+
+  const doSignUp = async (shiftId: string) => {
+    if (!volunteer) return;
+    setDupWarningShiftId(null);
 
     const res = await fetch("/api/assignments", {
       method: "POST",
@@ -179,7 +203,6 @@ export default function VolunteerPortal() {
 
     if (res.ok) {
       const data = await res.json();
-      // triaged:true means the system auto-confirmed the spot; false means pending review
       setSuccess(data.triaged
         ? "You're confirmed! Your spot has been reserved. 🎉"
         : "Request submitted! An admin will review and confirm your spot soon.");
@@ -1188,6 +1211,44 @@ export default function VolunteerPortal() {
           )}
         </div>
       )}
+
+      {/* Duplicate shift time warning modal */}
+      {dupWarningShiftId && (() => {
+        const target = shifts.find((s) => s.id === dupWarningShiftId);
+        const conflict = volunteer?.assignments
+          .filter((a) => a.status === "confirmed" || a.status === "pending")
+          .find((a) => target && timesOverlap(target.startTime, target.endTime, a.shift.startTime, a.shift.endTime));
+        return (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6">
+              <div className="text-3xl text-center mb-3">⚠️</div>
+              <h2 className="text-lg font-bold text-gray-900 text-center mb-2">Duplicate Shift Time</h2>
+              <p className="text-sm text-gray-600 text-center mb-2">
+                <strong>{target?.title}</strong> ({fmt12(target?.startTime || "")} – {fmt12(target?.endTime || "")})
+                overlaps with your existing shift:
+              </p>
+              <p className="text-sm font-medium text-amber-800 text-center bg-amber-50 rounded-lg py-2 px-3 mb-5">
+                {conflict?.shift.title} ({fmt12(conflict?.shift.startTime || "")} – {fmt12(conflict?.shift.endTime || "")})
+              </p>
+              <p className="text-sm text-gray-500 text-center mb-5">Do you still want to sign up?</p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setDupWarningShiftId(null)}
+                  className="flex-1 bg-gray-100 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => doSignUp(dupWarningShiftId)}
+                  className="flex-1 bg-amber-700 text-white py-2 rounded-lg font-medium hover:bg-amber-800 transition-colors"
+                >
+                  Yes, Sign Me Up
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ========= MY TEAM TAB ========= */}
       {activeTab === "my-team" && (volunteer?.role === "team_lead" || myTeams.length > 0) && (
