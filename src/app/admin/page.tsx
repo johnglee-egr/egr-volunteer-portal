@@ -2070,6 +2070,42 @@ export default function AdminDashboard() {
                 Assign to Shift
               </button>
               <span className="text-gray-300 text-sm">|</span>
+              {Array.from(selectedVolIds).some((id) => isPaired(id)) && (
+                <button
+                  onClick={() => {
+                    const selectedNames = Array.from(selectedVolIds)
+                      .map((id) => volunteers.find((v: Volunteer) => v.id === id)?.name)
+                      .filter(Boolean)
+                      .join(", ");
+                    showConfirm(
+                      `Separate all partnerships involving: ${selectedNames}?`,
+                      async () => {
+                        clearMessages();
+                        const toSplit = pairRequests.filter(
+                          (pr) => pr.status === "approved" &&
+                            (selectedVolIds.has(pr.requester.id) || selectedVolIds.has(pr.partner.id))
+                        );
+                        await Promise.all(
+                          toSplit.map((pr) =>
+                            fetch("/api/pair-requests", {
+                              method: "PUT",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ id: pr.id, status: "denied" }),
+                            })
+                          )
+                        );
+                        setSelectedVolIds(new Set());
+                        setSuccess(`${toSplit.length} partnership${toSplit.length !== 1 ? "s" : ""} dissolved.`);
+                        loadData();
+                      },
+                      "Yes, Separate"
+                    );
+                  }}
+                  className="bg-purple-100 text-purple-700 px-3 py-1.5 rounded text-sm font-medium hover:bg-purple-200"
+                >
+                  🔗 Separate Partners
+                </button>
+              )}
               <button
                 onClick={() => {
                   const names = Array.from(selectedVolIds)
