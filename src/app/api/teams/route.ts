@@ -142,11 +142,17 @@ export async function PUT(req: NextRequest) {
       }
     }
 
-    // Remove members
+    // Remove members. Also release any shift the captain put them on, otherwise
+    // the slot stays consumed by someone who is no longer on the roster and the
+    // capacity can never be recovered from the volunteer portal.
+    // Self-signups (assignedBy "self") are left alone — those are the member's own.
     if (removeMembers && Array.isArray(removeMembers)) {
       for (const memberId of removeMembers) {
         await prisma.teamMember.deleteMany({
           where: { teamId: id, volunteerId: memberId },
+        });
+        await prisma.assignment.deleteMany({
+          where: { volunteerId: memberId, assignedBy: { in: ["team_lead", "team-auto"] } },
         });
       }
     }

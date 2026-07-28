@@ -385,6 +385,23 @@ export default function VolunteerPortal() {
     refreshData();
   };
 
+  // Release a shift slot held by a team member (captain-initiated)
+  const handleRemoveMemberShift = async (assignmentId: string, memberName: string, shiftTitle: string) => {
+    setError("");
+    const res = await fetch("/api/assignments", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assignmentId }),
+    });
+    if (res.ok) {
+      setSuccess(`Removed ${memberName} from ${shiftTitle}.`);
+      refreshData();
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setError(d.error || "Could not remove that shift.");
+    }
+  };
+
   // Assign a team member to a shift via drag-and-drop
   const handleDragAssign = async (memberId: string, shiftId: string) => {
     setDragShiftId(null);
@@ -402,12 +419,24 @@ export default function VolunteerPortal() {
 
   // Print team schedule in a new window
   const printTeamSchedule = (team: Team) => {
+    const esc = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const members = team.members;
     const rows = members.map((tm) => {
       const memberShifts = (tm.volunteer.assignments || []).filter((a) => a.status === "confirmed");
-      return { name: tm.volunteer.name + (tm.volunteer.id === volunteer?.id ? " (you)" : ""), shifts: memberShifts };
+      return {
+        name: tm.volunteer.name + (tm.volunteer.id === volunteer?.id ? " (captain)" : ""),
+        phone: tm.volunteer.phone || "—",
+        shifts: memberShifts,
+      };
     });
-    const html = `<!DOCTYPE html><html><head><title>${team.name} — Team Schedule</title>
+    const festivalDate = members
+      .flatMap((tm) => tm.volunteer.assignments || [])
+      .map((a) => a.shift?.date)
+      .find(Boolean);
+    const dateLine = festivalDate
+      ? new Date(festivalDate).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+      : "";
+    const html = `<!DOCTYPE html><html><head><title>${esc(team.name)} — Team Schedule</title>
 <style>
   body{font-family:sans-serif;padding:24px;color:#1a1a1a}
   h1{color:#0f766e;font-size:22px;margin-bottom:4px}
@@ -416,35 +445,49 @@ export default function VolunteerPortal() {
   th{background:#ccfbf1;color:#0f766e;text-align:left;padding:8px 10px;border:1px solid #99f6e4}
   td{padding:8px 10px;border:1px solid #d1fae5;vertical-align:top}
   tr:nth-child(even) td{background:#f0fdf4}
-  @media print{@page{size:landscape;margin:1cm}button{display:none}}
+  @media print{
+    @page{size:landscape;margin:1cm}
+    body{padding:0}
+    button{display:none}
+    thead{display:table-header-group}
+    tr{page-break-inside:avoid}
+  }
 </style></head><body>
 <button onclick="window.print()" style="background:#0f766e;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;margin-bottom:16px">🖨 Print</button>
-<h1>${team.name} — Team Schedule</h1>
-<h2>EGR Harvest + Beer Festival</h2>
-<table><thead><tr><th>Member</th><th>Shifts</th></tr></thead><tbody>
-${rows.map((r) => `<tr><td style="font-weight:600">${r.name}</td><td>${r.shifts.length === 0 ? "<em style='color:#9ca3af'>No shifts yet</em>" : r.shifts.map((a) => `${a.shift.title} (${a.shift.startTime.slice(0,5)}–${a.shift.endTime.slice(0,5)})`).join("<br>")}</td></tr>`).join("")}
+<h1>${esc(team.name)} — Team Schedule</h1>
+<h2>EGR Harvest + Beer Festival${dateLine ? ` &middot; ${esc(dateLine)}` : ""}</h2>
+<table><thead><tr><th>Member</th><th>Phone</th><th>Shifts</th></tr></thead><tbody>
+${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(r.phone)}</td><td>${r.shifts.length === 0 ? "<em style='color:#9ca3af'>No shifts yet</em>" : r.shifts.map((a) => esc(`${a.shift.title} (${fmt12(a.shift.startTime)}–${fmt12(a.shift.endTime)})`)).join("<br>")}</td></tr>`).join("")}
 </tbody></table></body></html>`;
     const w = window.open("", "_blank");
     if (w) { w.document.write(html); w.document.close(); }
   };
 
-  // Export team schedule as CSV download
+  // Export team schedule as CSV download. Includes date and phone so the file
+  // is actually usable for contacting and coordinating the crew.
   const exportTeamCsv = (team: Team) => {
-    const rows: string[] = ["Member,Shift,Start,End"];
+    const esc = (s: string) => `"${(s || "").replace(/"/g, '""')}"`;
+    const rows: string[] = ["Team,Member,Phone,Date,Shift,Start,End"];
     for (const tm of team.members) {
       const memberShifts = (tm.volunteer.assignments || []).filter((a) => a.status === "confirmed");
+      const phone = tm.volunteer.phone || "";
       if (memberShifts.length === 0) {
-        rows.push(`"${tm.volunteer.name}","(none)","",""`);
+        rows.push([team.name, tm.volunteer.name, phone, "", "(no shift assigned)", "", ""].map(esc).join(","));
       } else {
         for (const a of memberShifts) {
-          rows.push(`"${tm.volunteer.name}","${a.shift.title}","${a.shift.startTime}","${a.shift.endTime}"`);
+          const d = a.shift.date ? new Date(a.shift.date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : "";
+          rows.push([team.name, tm.volunteer.name, phone, d, a.shift.title, fmt12(a.shift.startTime), fmt12(a.shift.endTime)].map(esc).join(","));
         }
       }
     }
-    const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+    const blob = new Blob([rows.join("\r\n")], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `${team.name.replace(/\s+/g, "_")}_schedule.csv`; a.click();
+    a.href = url;
+    a.download = `${team.name.replace(/[^a-z0-9]+/gi, "_")}_schedule.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
 
@@ -1176,30 +1219,49 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${r.name}</td><td>${r.shifts.
                           </span>
                         </div>
                       </div>
-                      <div className="shrink-0">
-                        {myTeams.length > 0 && available > 0 ? (
+                      <div className="shrink-0 flex flex-col items-stretch gap-1.5">
+                        {isConfirmed && (() => {
+                          const myAssignment = volunteer?.assignments.find(
+                            (a) => a.shiftId === shift.id && a.status === "confirmed"
+                          );
+                          return (
+                            <>
+                              <span className="bg-green-100 text-green-700 px-4 py-2 rounded-lg text-sm font-medium inline-block text-center">Confirmed</span>
+                              {myAssignment && (
+                                <button
+                                  onClick={() => handleRemove(myAssignment.id)}
+                                  className="text-red-600 hover:text-red-800 text-xs font-medium underline"
+                                >
+                                  Cancel my sign-up
+                                </button>
+                              )}
+                            </>
+                          );
+                        })()}
+                        {!isConfirmed && isPending && (
+                          <span className="bg-yellow-100 text-yellow-700 px-4 py-2 rounded-lg text-sm font-medium inline-block text-center">Pending Approval</span>
+                        )}
+                        {myTeams.length > 0 && available > 0 && (
                           <button
-                            onClick={() => {
-                              const allMembers = myTeams.flatMap((t) => t.members);
-                              const initialIds = new Set(allMembers.map((m) => m.volunteer.id));
-                              setMemberSignUpModal({ shift, selectedIds: initialIds });
-                            }}
+                            onClick={() => setMemberSignUpModal({ shift, selectedIds: new Set() })}
                             className="bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-800 transition-colors"
                           >
                             Sign Up Members
                           </button>
-                        ) : isConfirmed ? (
-                          <span className="bg-green-100 text-green-700 px-4 py-2 rounded-lg text-sm font-medium inline-block">Confirmed</span>
-                        ) : isPending ? (
-                          <span className="bg-yellow-100 text-yellow-700 px-4 py-2 rounded-lg text-sm font-medium inline-block">Pending Approval</span>
-                        ) : available > 0 ? (
-                          <button
-                            onClick={() => handleSignUp(shift.id)}
-                            className="bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-800 transition-colors"
-                          >
-                            Request This Shift
-                          </button>
-                        ) : (
+                        )}
+                        {myTeams.length === 0 && !isConfirmed && !isPending && (
+                          available > 0 ? (
+                            <button
+                              onClick={() => handleSignUp(shift.id)}
+                              className="bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-800 transition-colors"
+                            >
+                              Request This Shift
+                            </button>
+                          ) : (
+                            <span className="text-red-600 font-medium text-sm">No spots available</span>
+                          )
+                        )}
+                        {myTeams.length > 0 && available === 0 && !isConfirmed && !isPending && (
                           <span className="text-red-600 font-medium text-sm">No spots available</span>
                         )}
                       </div>
@@ -1216,16 +1278,36 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${r.name}</td><td>${r.shifts.
       {isNewSignup && activeTab === "shifts" && (
         <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t-2 border-green-300 shadow-lg">
           <div className="max-w-6xl mx-auto px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="text-sm text-gray-600 text-center sm:text-left">
-              <span className="font-semibold text-green-700">✅ Done picking shifts?</span>
-              {" "}Click Confirm to complete your sign-up.
-            </div>
-            <button
-              onClick={() => { setIsNewSignup(false); setStep("signup-complete"); }}
-              className="bg-green-700 text-white px-8 py-2.5 rounded-lg font-bold hover:bg-green-800 transition-colors whitespace-nowrap shadow-sm"
-            >
-              Confirm My Selection →
-            </button>
+            {(() => {
+              // Each "Request This Shift" already commits immediately, so this bar must
+              // not imply the sign-up is still incomplete — it's just a way to finish up.
+              const locked = volunteer?.assignments.filter((a) => a.status === "confirmed").length || 0;
+              return (
+                <>
+                  <div className="text-sm text-gray-600 text-center sm:text-left">
+                    {locked > 0 ? (
+                      <>
+                        <span className="font-semibold text-green-700">
+                          ✅ {locked} shift{locked !== 1 ? "s" : ""} confirmed — you&apos;re signed up.
+                        </span>
+                        {" "}Keep browsing, or finish up.
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-semibold text-green-700">Pick a shift to get started.</span>
+                        {" "}Your spot is reserved the moment you request it.
+                      </>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => { setIsNewSignup(false); setStep("signup-complete"); }}
+                    className="bg-green-700 text-white px-8 py-2.5 rounded-lg font-bold hover:bg-green-800 transition-colors whitespace-nowrap shadow-sm"
+                  >
+                    {locked > 0 ? "I'm Done →" : "Skip for Now →"}
+                  </button>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -1389,28 +1471,49 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${r.name}</td><td>${r.shifts.
             <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6">
               <h2 className="text-lg font-bold text-amber-900 mb-1">{shift.title}</h2>
               <p className="text-sm text-gray-500 mb-1">{fmt12(shift.startTime)} – {fmt12(shift.endTime)}</p>
-              <p className="text-xs text-gray-400 mb-4">{openSlots} spot{openSlots !== 1 ? "s" : ""} open — select members to sign up:</p>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs text-gray-400">{openSlots} spot{openSlots !== 1 ? "s" : ""} open</p>
+                <p className={`text-xs font-semibold ${selectedIds.size > openSlots ? "text-red-600" : "text-amber-700"}`}>
+                  {selectedIds.size} of {openSlots} selected
+                </p>
+              </div>
+              {selectedIds.size > openSlots && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">
+                  Too many selected — this shift only has {openSlots} spot{openSlots !== 1 ? "s" : ""} left.
+                </p>
+              )}
               <div className="space-y-2 max-h-60 overflow-y-auto mb-4">
                 {allMembers.map((tm) => {
                   const alreadyOn = shift.assignments.some((a) => a.volunteer.id === tm.volunteer.id);
                   const isMe = tm.volunteer.id === volunteer?.id;
+                  // Flag a member already booked on a shift that overlaps this one
+                  const conflict = (tm.volunteer.assignments || []).find(
+                    (a) => a.status === "confirmed" && a.shiftId !== shift.id &&
+                      timesOverlap(shift.startTime, shift.endTime, a.shift.startTime, a.shift.endTime)
+                  );
+                  const blocked = alreadyOn || !!conflict;
                   return (
-                    <label key={tm.id} className={`flex items-center gap-3 rounded-lg p-2.5 cursor-pointer ${alreadyOn ? "opacity-60 cursor-not-allowed" : "hover:bg-amber-50"}`}>
+                    <label key={tm.id} className={`flex items-start gap-3 rounded-lg p-2.5 ${blocked ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-amber-50"}`}>
                       <input
                         type="checkbox"
                         checked={alreadyOn || selectedIds.has(tm.volunteer.id)}
-                        disabled={alreadyOn}
+                        disabled={blocked}
                         onChange={(e) => {
                           const next = new Set(selectedIds);
                           if (e.target.checked) next.add(tm.volunteer.id);
                           else next.delete(tm.volunteer.id);
                           setMemberSignUpModal({ ...memberSignUpModal, selectedIds: next });
                         }}
-                        className="w-4 h-4 accent-amber-600"
+                        className="w-4 h-4 accent-amber-600 mt-0.5"
                       />
                       <span className="text-sm font-medium text-gray-800">
                         {tm.volunteer.name}{isMe ? " (you)" : ""}
-                        {alreadyOn && <span className="ml-1 text-xs text-green-600">✓ already assigned</span>}
+                        {alreadyOn && <span className="block text-xs text-green-600 font-normal">✓ already on this shift</span>}
+                        {!alreadyOn && conflict && (
+                          <span className="block text-xs text-red-500 font-normal">
+                            ✕ already on {conflict.shift.title} ({fmt12(conflict.shift.startTime)}–{fmt12(conflict.shift.endTime)})
+                          </span>
+                        )}
                       </span>
                     </label>
                   );
@@ -1423,7 +1526,8 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${r.name}</td><td>${r.shifts.
                 >Cancel</button>
                 <button
                   onClick={handleMemberSignUp}
-                  className="flex-1 bg-amber-700 text-white py-2 rounded-lg font-medium hover:bg-amber-800 text-sm"
+                  disabled={selectedIds.size === 0 || selectedIds.size > openSlots}
+                  className="flex-1 bg-amber-700 text-white py-2 rounded-lg font-medium hover:bg-amber-800 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
                 >Sign Up Selected</button>
               </div>
             </div>
@@ -1640,22 +1744,34 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${r.name}</td><td>${r.shifts.
                             {!isLeader && (
                               <button
                                 onClick={async () => {
+                                  const shiftCount = memberShifts.length;
+                                  const warning = shiftCount > 0
+                                    ? `Remove ${tm.volunteer.name} from ${team.name}? This also frees the ${shiftCount} shift${shiftCount !== 1 ? "s" : ""} you assigned them.`
+                                    : `Remove ${tm.volunteer.name} from ${team.name}?`;
+                                  if (!window.confirm(warning)) return;
                                   await fetch("/api/teams", {
                                     method: "PUT",
                                     headers: { "Content-Type": "application/json" },
                                     body: JSON.stringify({ id: team.id, removeMembers: [tm.volunteer.id], requesterId: volunteer?.id }),
                                   });
+                                  setSuccess(`${tm.volunteer.name} removed from ${team.name}.`);
                                   refreshData();
                                 }}
                                 className="text-red-400 hover:text-red-600 text-xs font-medium shrink-0"
-                              >Remove</button>
+                                title="Remove this person from the team entirely"
+                              >Remove from team</button>
                             )}
                           </div>
                           {memberShifts.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {memberShifts.map((a) => (
-                                <span key={a.id} className="text-xs bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full">
+                                <span key={a.id} className="inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-800 pl-1.5 pr-1 py-0.5 rounded-full">
                                   {a.shift.title} {fmt12(a.shift.startTime)}
+                                  <button
+                                    onClick={() => handleRemoveMemberShift(a.id, tm.volunteer.name, a.shift.title)}
+                                    className="text-amber-500 hover:text-red-600 font-bold leading-none px-0.5"
+                                    title={`Remove ${tm.volunteer.name} from ${a.shift.title} (frees the slot)`}
+                                  >&times;</button>
                                 </span>
                               ))}
                             </div>
