@@ -14,9 +14,10 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const body = await req.json();
   const { requesterId, partnerId: directPartnerId, partnerName, partnerEmail, partnerPhone, partnerIsOver21, shiftId, message } = body;
-  // autoApprove is an admin-only privilege — ignore it if the caller isn't an admin
+  // autoApprove / skipCrossAssign are admin-only privileges
   const callerIsAdmin = await isAdmin();
   const autoApprove = callerIsAdmin ? !!body.autoApprove : false;
+  const skipCrossAssign = callerIsAdmin ? !!body.skipCrossAssign : false;
 
   // Prefer a directly-supplied partnerId (from admin UI) over a name-based lookup.
   // Name lookup is kept for the volunteer-facing "pair request by name" flow.
@@ -78,7 +79,8 @@ export async function POST(req: NextRequest) {
 
   // When auto-approved (admin-created pair), cross-assign each person to the
   // other's existing confirmed shifts so the pair is immediately in sync.
-  if (autoApprove) {
+  // skipCrossAssign lets the admin drive shift assignment explicitly via the UI.
+  if (autoApprove && !skipCrossAssign) {
     await crossAssignPair(requesterId, partner.id);
   }
 

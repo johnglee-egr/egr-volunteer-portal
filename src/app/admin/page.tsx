@@ -82,6 +82,22 @@ interface Notification {
   createdAt: string;
 }
 
+interface PartnerShiftEntry {
+  id: string;
+  title: string;
+  startTime: string;
+  endTime: string;
+  ownedBy: string[];
+}
+
+interface PartnerModal {
+  volAId: string;
+  volBId: string;
+  volAName: string;
+  volBName: string;
+  combinedShifts: PartnerShiftEntry[];
+}
+
 export default function AdminDashboard() {
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
@@ -153,6 +169,9 @@ export default function AdminDashboard() {
   // Bulk-assign state (Volunteers tab)
   const [selectedVolIds, setSelectedVolIds] = useState<Set<string>>(new Set());
   const [bulkAssignShiftId, setBulkAssignShiftId] = useState<string>("");
+  // Partner-together modal state
+  const [partnerModal, setPartnerModal] = useState<PartnerModal | null>(null);
+  const [partnerSelectedShiftIds, setPartnerSelectedShiftIds] = useState<Set<string>>(new Set());
   // Team member expand/collapse (Volunteers tab)
   const [expandedTeamIds, setExpandedTeamIds] = useState<Set<string>>(new Set());
   // Volunteer search (Volunteers tab)
@@ -1098,6 +1117,67 @@ export default function AdminDashboard() {
     );
     await loadData();
     setSuccess("Partnership dissolved.");
+  };
+
+  // Open the "Partner Together" modal for the two selected volunteers
+  const handleOpenPartnerModal = () => {
+    const [idA, idB] = Array.from(selectedVolIds);
+    const volsWithAssignments = volunteers as Array<Volunteer & { assignments?: Array<{ shiftId: string; shift?: { id: string; title: string; startTime: string; endTime: string } }> }>;
+    const volA = volsWithAssignments.find((v) => v.id === idA);
+    const volB = volsWithAssignments.find((v) => v.id === idB);
+    if (!volA || !volB) return;
+
+    const shiftMap = new Map<string, { id: string; title: string; startTime: string; endTime: string; ownedBy: string[] }>();
+    for (const a of volA.assignments || []) {
+      if (!a.shift) continue;
+      const entry = shiftMap.get(a.shiftId) ?? { id: a.shiftId, title: a.shift.title, startTime: a.shift.startTime, endTime: a.shift.endTime, ownedBy: [] };
+      entry.ownedBy.push(volA.name);
+      shiftMap.set(a.shiftId, entry);
+    }
+    for (const a of volB.assignments || []) {
+      if (!a.shift) continue;
+      const entry = shiftMap.get(a.shiftId) ?? { id: a.shiftId, title: a.shift.title, startTime: a.shift.startTime, endTime: a.shift.endTime, ownedBy: [] };
+      if (!entry.ownedBy.includes(volB.name)) entry.ownedBy.push(volB.name);
+      shiftMap.set(a.shiftId, entry);
+    }
+
+    setPartnerModal({
+      volAId: idA, volBId: idB,
+      volAName: volA.name, volBName: volB.name,
+      combinedShifts: Array.from(shiftMap.values()),
+    });
+    setPartnerSelectedShiftIds(new Set());
+  };
+
+  // Execute the pairing (and optional shift assignments) from the modal
+  const handleConfirmPartner = async () => {
+    if (!partnerModal) return;
+    clearMessages();
+    const { volAId, volBId, volAName, volBName } = partnerModal;
+
+    const res = await fetch("/api/pair-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requesterId: volAId, partnerId: volBId, autoApprove: true, skipCrossAssign: true }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      setError(data.error || "Failed to create partnership.");
+      return;
+    }
+
+    for (const shiftId of partnerSelectedShiftIds) {
+      await fetch("/api/assignments/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shiftId, volunteerIds: [volAId, volBId] }),
+      });
+    }
+
+    setPartnerModal(null);
+    setSelectedVolIds(new Set());
+    await loadData();
+    setSuccess(`${volAName} and ${volBName} are now partners!`);
   };
 
   // Pair requests
@@ -2104,6 +2184,14 @@ export default function AdminDashboard() {
                   className="bg-purple-100 text-purple-700 px-2 py-1 rounded text-xs font-medium hover:bg-purple-200"
                 >
                   🔗 Separate Partners
+                </button>
+              )}
+              {selectedVolIds.size === 2 && Array.from(selectedVolIds).every((id) => !isPaired(id)) && (
+                <button
+                  onClick={handleOpenPartnerModal}
+                  className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-medium hover:bg-green-200"
+                >
+                  🤝 Partner Together
                 </button>
               )}
               <button
@@ -3735,6 +3823,89 @@ export default function AdminDashboard() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Welcome Message</label>
               <textarea value={settings.welcomeMessage} onChange={(e) => setSettings({ ...settings, welcomeMessage: e.target.value })} className={inputClass} rows={3} placeholder="Thank you for volunteering at our festival!" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========= PARTNER TOGETHER MODAL ========= */}
+      {partnerModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-5">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl">🤝</span>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Partner Together</h3>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  {partnerModal.volAName} &amp; {partnerModal.volBName}
+                </p>
+              </div>
+            </div>
+
+            {partnerModal.combinedShifts.length > 0 ? (
+              <div>
+                <p className="text-sm font-medium text-gray-700 mb-2">
+                  Select shifts to assign both partners to (optional):
+                </p>
+                <div className="space-y-2 max-h-56 overflow-y-auto">
+                  {partnerModal.combinedShifts.map((s) => (
+                    <label key={s.id} className="flex items-center gap-2 cursor-pointer rounded-lg border border-gray-200 px-3 py-2 hover:bg-amber-50">
+                      <input
+                        type="checkbox"
+                        checked={partnerSelectedShiftIds.has(s.id)}
+                        onChange={(e) => {
+                          const next = new Set(partnerSelectedShiftIds);
+                          if (e.target.checked) next.add(s.id);
+                          else next.delete(s.id);
+                          setPartnerSelectedShiftIds(next);
+                        }}
+                        className="rounded"
+                      />
+                      <span className="flex-1 text-sm text-gray-800">
+                        {s.title}
+                        <span className="text-gray-400 ml-1">({fmt12(s.startTime)}–{fmt12(s.endTime)})</span>
+                      </span>
+                      <span className="text-xs text-gray-400">{s.ownedBy.join(", ")}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400 mt-2">
+                  Shifts from each volunteer are listed. Leave unchecked to partner without changing shift assignments.
+                </p>
+              </div>
+            ) : (
+              <div>
+                <p className="text-sm font-medium text-gray-700 mb-2">
+                  Neither volunteer has shifts yet. Optionally assign them to a shift together:
+                </p>
+                <select
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  value={partnerSelectedShiftIds.size > 0 ? Array.from(partnerSelectedShiftIds)[0] : ""}
+                  onChange={(e) => setPartnerSelectedShiftIds(e.target.value ? new Set([e.target.value]) : new Set())}
+                >
+                  <option value="">— No shift (partner only) —</option>
+                  {shifts.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.category.name} — {s.title} ({fmt12(s.startTime)}–{fmt12(s.endTime)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="flex gap-3 justify-end pt-1">
+              <button
+                onClick={() => setPartnerModal(null)}
+                className="px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmPartner}
+                className="px-4 py-2 rounded-lg bg-green-700 text-white text-sm font-semibold hover:bg-green-800"
+              >
+                {partnerSelectedShiftIds.size > 0 ? "Partner & Assign Shifts" : "Partner Only"}
+              </button>
             </div>
           </div>
         </div>
