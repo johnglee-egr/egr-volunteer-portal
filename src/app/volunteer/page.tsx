@@ -407,6 +407,7 @@ export default function VolunteerPortal() {
                 type="text"
                 value={contact}
                 onChange={(e) => setContact(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleLogin()}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-amber-400 focus:border-transparent outline-none"
                 placeholder="john@example.com or 555-123-4567"
               />
