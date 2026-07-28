@@ -26,11 +26,22 @@ export async function POST(req: NextRequest) {
     stationNames = JSON.stringify(names);
   }
 
+  // Default to the festival date from settings if no date is provided
+  let shiftDate: Date;
+  if (data.date) {
+    shiftDate = new Date(data.date);
+  } else {
+    const settings = await prisma.festivalSettings.findUnique({ where: { id: "main" } });
+    shiftDate = settings?.festivalDate
+      ? new Date(settings.festivalDate + "T00:00:00.000Z")
+      : new Date();
+  }
+
   const shift = await prisma.shift.create({
     data: {
       title: data.title,
       description: data.description,
-      date: new Date(data.date),
+      date: shiftDate,
       startTime: data.startTime,
       endTime: data.endTime,
       capacity: parseInt(data.capacity) || 1,

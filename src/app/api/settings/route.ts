@@ -29,5 +29,12 @@ export async function PUT(req: NextRequest) {
     update: data,
     create: { id: "main", ...data },
   });
+
+  // When the festival date changes, sync all shift dates to match
+  if (data.festivalDate && typeof data.festivalDate === "string") {
+    const shiftDate = new Date(data.festivalDate + "T00:00:00.000Z");
+    await prisma.shift.updateMany({ data: { date: shiftDate } });
+  }
+
   return NextResponse.json(settings);
 }
