@@ -98,6 +98,16 @@ export default function VolunteerPortal() {
   // Shift selection drill-down: category → shift
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
+  // Team-lead multi-member sign-up modal
+  const [memberSignUpModal, setMemberSignUpModal] = useState<{ shift: Shift; selectedIds: Set<string> } | null>(null);
+
+  // My Team tab: drag-to-assign
+  const [dragShiftId, setDragShiftId] = useState<string | null>(null);
+  const [dragOverMemberId, setDragOverMemberId] = useState<string | null>(null);
+
+  // My Team tab sub-view
+  const [teamSubTab, setTeamSubTab] = useState<"roster" | "schedule">("roster");
+
   useEffect(() => {
     fetch("/api/shifts").then((r) => r.json()).then(setShifts);
   }, []);
@@ -351,6 +361,90 @@ export default function VolunteerPortal() {
       const d = await res.json();
       setError(d.error || "Failed to sign up team.");
     }
+  };
+
+  // Sign up selected team members for a shift (captain-driven multi-select)
+  const handleMemberSignUp = async () => {
+    if (!memberSignUpModal) return;
+    const { shift, selectedIds } = memberSignUpModal;
+    setError("");
+    let count = 0;
+    for (const memberId of selectedIds) {
+      const already = shift.assignments.some((a) => a.volunteer.id === memberId);
+      if (already) continue;
+      const res = await fetch("/api/assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ volunteerId: memberId, shiftId: shift.id, assignedBy: "team_lead" }),
+      });
+      if (res.ok) count++;
+    }
+    setMemberSignUpModal(null);
+    setSuccess(`Signed up ${count} member${count !== 1 ? "s" : ""} for ${shift.title}!`);
+    refreshData();
+  };
+
+  // Assign a team member to a shift via drag-and-drop
+  const handleDragAssign = async (memberId: string, shiftId: string) => {
+    setDragShiftId(null);
+    setDragOverMemberId(null);
+    const already = shifts.find((s) => s.id === shiftId)?.assignments.some((a) => a.volunteer.id === memberId);
+    if (already) { setError("This member is already on that shift."); return; }
+    const res = await fetch("/api/assignments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ volunteerId: memberId, shiftId, assignedBy: "team_lead" }),
+    });
+    if (res.ok) { refreshData(); setSuccess("Shift assigned!"); }
+    else { const d = await res.json(); setError(d.error || "Could not assign shift."); }
+  };
+
+  // Print team schedule in a new window
+  const printTeamSchedule = (team: Team) => {
+    const members = team.members;
+    const rows = members.map((tm) => {
+      const memberShifts = (tm.volunteer.assignments || []).filter((a) => a.status === "confirmed");
+      return { name: tm.volunteer.name + (tm.volunteer.id === volunteer?.id ? " (you)" : ""), shifts: memberShifts };
+    });
+    const html = `<!DOCTYPE html><html><head><title>${team.name} — Team Schedule</title>
+<style>
+  body{font-family:sans-serif;padding:24px;color:#1a1a1a}
+  h1{color:#0f766e;font-size:22px;margin-bottom:4px}
+  h2{color:#6b7280;font-size:14px;font-weight:normal;margin-bottom:20px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{background:#ccfbf1;color:#0f766e;text-align:left;padding:8px 10px;border:1px solid #99f6e4}
+  td{padding:8px 10px;border:1px solid #d1fae5;vertical-align:top}
+  tr:nth-child(even) td{background:#f0fdf4}
+  @media print{@page{size:landscape;margin:1cm}button{display:none}}
+</style></head><body>
+<button onclick="window.print()" style="background:#0f766e;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;margin-bottom:16px">🖨 Print</button>
+<h1>${team.name} — Team Schedule</h1>
+<h2>EGR Harvest + Beer Festival</h2>
+<table><thead><tr><th>Member</th><th>Shifts</th></tr></thead><tbody>
+${rows.map((r) => `<tr><td style="font-weight:600">${r.name}</td><td>${r.shifts.length === 0 ? "<em style='color:#9ca3af'>No shifts yet</em>" : r.shifts.map((a) => `${a.shift.title} (${a.shift.startTime.slice(0,5)}–${a.shift.endTime.slice(0,5)})`).join("<br>")}</td></tr>`).join("")}
+</tbody></table></body></html>`;
+    const w = window.open("", "_blank");
+    if (w) { w.document.write(html); w.document.close(); }
+  };
+
+  // Export team schedule as CSV download
+  const exportTeamCsv = (team: Team) => {
+    const rows: string[] = ["Member,Shift,Start,End"];
+    for (const tm of team.members) {
+      const memberShifts = (tm.volunteer.assignments || []).filter((a) => a.status === "confirmed");
+      if (memberShifts.length === 0) {
+        rows.push(`"${tm.volunteer.name}","(none)","",""`);
+      } else {
+        for (const a of memberShifts) {
+          rows.push(`"${tm.volunteer.name}","${a.shift.title}","${a.shift.startTime}","${a.shift.endTime}"`);
+        }
+      }
+    }
+    const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `${team.name.replace(/\s+/g, "_")}_schedule.csv`; a.click();
+    URL.revokeObjectURL(url);
   };
 
   // ── Home: pick a path ──────────────────────────────────────────────────────
@@ -798,11 +892,17 @@ export default function VolunteerPortal() {
         <div>
           <h1 className="text-3xl font-bold text-amber-900">
             Welcome, {volunteer?.name}!
-            {volunteer?.role === "team_lead" && <span className="ml-2 text-sm bg-teal-100 text-teal-800 px-2 py-1 rounded-full align-middle">Team Lead</span>}
+            {volunteer?.role === "team_lead" && <span className="ml-2 text-sm bg-teal-100 text-teal-800 px-2 py-1 rounded-full align-middle">Team Captain</span>}
           </h1>
           <p className="text-gray-600 mt-1">
             {volunteer?.assignments.filter((a) => a.status === "confirmed").length || 0} active assignment(s)
           </p>
+          {myTeams.length > 0 && (() => {
+            const others = myTeams.flatMap((t) => t.members.filter((m) => m.volunteer.id !== volunteer?.id));
+            return (
+              <p className="text-teal-700 text-sm mt-0.5 font-medium">({others.length} team member{others.length !== 1 ? "s" : ""} + you)</p>
+            );
+          })()}
         </div>
         <div className="flex gap-2">
           <button
@@ -957,7 +1057,7 @@ export default function VolunteerPortal() {
                 : "text-amber-700 hover:text-amber-900"
             }`}
           >
-            {tab === "shifts" ? "Available Shifts" : tab === "my-schedule" ? "My Schedule" : "My Team"}
+            {tab === "shifts" ? "Available Shifts" : tab === "my-schedule" ? (myTeams.length > 0 ? "My Team Schedule" : "My Schedule") : "My Team"}
           </button>
         ))}
       </div>
@@ -1075,7 +1175,18 @@ export default function VolunteerPortal() {
                         </div>
                       </div>
                       <div className="shrink-0">
-                        {isConfirmed ? (
+                        {myTeams.length > 0 && available > 0 ? (
+                          <button
+                            onClick={() => {
+                              const allMembers = myTeams.flatMap((t) => t.members);
+                              const initialIds = new Set(allMembers.map((m) => m.volunteer.id));
+                              setMemberSignUpModal({ shift, selectedIds: initialIds });
+                            }}
+                            className="bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-800 transition-colors"
+                          >
+                            Sign Up Members
+                          </button>
+                        ) : isConfirmed ? (
                           <span className="bg-green-100 text-green-700 px-4 py-2 rounded-lg text-sm font-medium inline-block">Confirmed</span>
                         ) : isPending ? (
                           <span className="bg-yellow-100 text-yellow-700 px-4 py-2 rounded-lg text-sm font-medium inline-block">Pending Approval</span>
@@ -1117,8 +1228,65 @@ export default function VolunteerPortal() {
         </div>
       )}
 
-      {/* My Schedule */}
-      {activeTab === "my-schedule" && (
+      {/* My Schedule / My Team Schedule */}
+      {activeTab === "my-schedule" && myTeams.length > 0 && (() => {
+        // Team captain view: show all members' shifts with print/export
+        const team = myTeams[0];
+        const allMembers = team.members;
+        return (
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-teal-900">My Team Schedule — {team.name}</h2>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => exportTeamCsv(team)}
+                  className="bg-gray-100 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-gray-200 flex items-center gap-1"
+                >
+                  ⬇ Export CSV
+                </button>
+                <button
+                  onClick={() => printTeamSchedule(team)}
+                  className="bg-teal-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-teal-800 flex items-center gap-1"
+                >
+                  🖨 Print
+                </button>
+              </div>
+            </div>
+            <div className="space-y-3">
+              {allMembers.map((tm) => {
+                const isMe = tm.volunteer.id === volunteer?.id;
+                const memberShifts = (tm.volunteer.assignments || []).filter((a) => a.status === "confirmed");
+                const pendingShifts = (tm.volunteer.assignments || []).filter((a) => a.status === "pending");
+                return (
+                  <div key={tm.id} className={`rounded-xl border p-4 ${isMe ? "bg-teal-50 border-teal-200" : "bg-white border-gray-200"}`}>
+                    <p className="font-semibold text-sm text-gray-800 mb-2">
+                      {isMe ? <span className="text-teal-700">👑 {tm.volunteer.name} (you)</span> : tm.volunteer.name}
+                    </p>
+                    {memberShifts.length === 0 && pendingShifts.length === 0 ? (
+                      <p className="text-xs text-gray-400">No shifts assigned</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {memberShifts.map((a) => (
+                          <span key={a.id} className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium">
+                            ✓ {a.shift.title} {fmt12(a.shift.startTime)}–{fmt12(a.shift.endTime)}
+                          </span>
+                        ))}
+                        {pendingShifts.map((a) => (
+                          <span key={a.id} className="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full">
+                            ⏳ {a.shift.title} {fmt12(a.shift.startTime)}–{fmt12(a.shift.endTime)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
+      {activeTab === "my-schedule" && myTeams.length === 0 && (
         <div className="space-y-4">
           {/* Pending requests */}
           {volunteer?.assignments.filter((a) => a.status === "pending").map((assignment) => (
@@ -1209,6 +1377,58 @@ export default function VolunteerPortal() {
         </div>
       )}
 
+      {/* Team member sign-up modal (team captain picks which members to sign up) */}
+      {memberSignUpModal && (() => {
+        const { shift, selectedIds } = memberSignUpModal;
+        const allMembers = myTeams.flatMap((t) => t.members);
+        const openSlots = shift.capacity - shift.assignments.length;
+        return (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6">
+              <h2 className="text-lg font-bold text-amber-900 mb-1">{shift.title}</h2>
+              <p className="text-sm text-gray-500 mb-1">{fmt12(shift.startTime)} – {fmt12(shift.endTime)}</p>
+              <p className="text-xs text-gray-400 mb-4">{openSlots} spot{openSlots !== 1 ? "s" : ""} open — select members to sign up:</p>
+              <div className="space-y-2 max-h-60 overflow-y-auto mb-4">
+                {allMembers.map((tm) => {
+                  const alreadyOn = shift.assignments.some((a) => a.volunteer.id === tm.volunteer.id);
+                  const isMe = tm.volunteer.id === volunteer?.id;
+                  return (
+                    <label key={tm.id} className={`flex items-center gap-3 rounded-lg p-2.5 cursor-pointer ${alreadyOn ? "opacity-60 cursor-not-allowed" : "hover:bg-amber-50"}`}>
+                      <input
+                        type="checkbox"
+                        checked={alreadyOn || selectedIds.has(tm.volunteer.id)}
+                        disabled={alreadyOn}
+                        onChange={(e) => {
+                          const next = new Set(selectedIds);
+                          if (e.target.checked) next.add(tm.volunteer.id);
+                          else next.delete(tm.volunteer.id);
+                          setMemberSignUpModal({ ...memberSignUpModal, selectedIds: next });
+                        }}
+                        className="w-4 h-4 accent-amber-600"
+                      />
+                      <span className="text-sm font-medium text-gray-800">
+                        {tm.volunteer.name}{isMe ? " (you)" : ""}
+                        {alreadyOn && <span className="ml-1 text-xs text-green-600">✓ already assigned</span>}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setMemberSignUpModal(null)}
+                  className="flex-1 bg-gray-100 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-200 text-sm"
+                >Cancel</button>
+                <button
+                  onClick={handleMemberSignUp}
+                  className="flex-1 bg-amber-700 text-white py-2 rounded-lg font-medium hover:bg-amber-800 text-sm"
+                >Sign Up Selected</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Duplicate shift time warning modal */}
       {dupWarningShiftId && (() => {
         const target = shifts.find((s) => s.id === dupWarningShiftId);
@@ -1250,15 +1470,32 @@ export default function VolunteerPortal() {
       {/* ========= MY TEAM TAB ========= */}
       {activeTab === "my-team" && (volunteer?.role === "team_lead" || myTeams.length > 0) && (
         <div>
-          <div className="flex justify-between items-center mb-6">
+          <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-bold text-teal-900">My Teams</h2>
-            <button
-              onClick={() => setShowTeamForm(!showTeamForm)}
-              className="bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-teal-800 transition-colors"
-            >
-              {showTeamForm ? "Cancel" : "+ Create Team"}
-            </button>
+            {/* Only show create button if captain has no teams yet */}
+            {myTeams.length === 0 && (
+              <button
+                onClick={() => setShowTeamForm(!showTeamForm)}
+                className="bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-teal-800 transition-colors"
+              >
+                {showTeamForm ? "Cancel" : "+ Create Team"}
+              </button>
+            )}
           </div>
+
+          {/* Sub-tab: Roster | My Team Schedule */}
+          {myTeams.length > 0 && (
+            <div className="flex gap-1 mb-5 bg-teal-50 rounded-lg p-1 border border-teal-100">
+              <button
+                onClick={() => setTeamSubTab("roster")}
+                className={`flex-1 py-1.5 px-3 rounded text-sm font-medium transition-colors ${teamSubTab === "roster" ? "bg-white text-teal-900 shadow-sm" : "text-teal-700 hover:text-teal-900"}`}
+              >Roster</button>
+              <button
+                onClick={() => setTeamSubTab("schedule")}
+                className={`flex-1 py-1.5 px-3 rounded text-sm font-medium transition-colors ${teamSubTab === "schedule" ? "bg-white text-teal-900 shadow-sm" : "text-teal-700 hover:text-teal-900"}`}
+              >My Team Schedule</button>
+            </div>
+          )}
 
           {/* Create Team Form */}
           {showTeamForm && (
@@ -1315,111 +1552,191 @@ export default function VolunteerPortal() {
 
           {myTeams.map((team) => (
             <div key={team.id} className="bg-white rounded-xl border border-teal-100 shadow-sm p-5 mb-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">👥</span>
-                  <h3 className="font-bold text-lg text-teal-900">{team.name}</h3>
-                  <span className="text-xs bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full">{team.members.length} members</span>
-                </div>
-                <button
-                  onClick={() => setTeamSignUpTeamId(teamSignUpTeamId === team.id ? null : team.id)}
-                  className="bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-800"
-                >
-                  Sign Up Team for Shift
-                </button>
-              </div>
 
-              {/* Team shift sign-up panel */}
-              {teamSignUpTeamId === team.id && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
-                  <h4 className="font-medium text-amber-900 mb-3">Choose a shift for your team:</h4>
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {shifts.filter((s) => {
-                      const openSlots = s.capacity - s.assignments.length;
-                      return openSlots > 0;
-                    }).map((s) => (
-                      <div key={s.id} className="flex items-center justify-between bg-white rounded-lg p-3 border border-amber-100">
-                        <div>
-                          <span className="font-medium text-amber-900">{s.title}</span>
-                          {s.category && <span className="ml-2 text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{s.category.name}</span>}
-                          <p className="text-xs text-gray-500">{fmt12(s.startTime)} - {fmt12(s.endTime)} &middot; {s.capacity - s.assignments.length} spots open</p>
-                        </div>
-                        <button
-                          onClick={() => handleTeamSignUp(team.id, s.id)}
-                          className="bg-amber-700 text-white px-3 py-1.5 rounded text-xs font-medium hover:bg-amber-800"
-                        >
-                          Sign Up Team
-                        </button>
-                      </div>
-                    ))}
+              {/* ── ROSTER sub-tab ── */}
+              {teamSubTab === "roster" && (
+                <>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">👥</span>
+                      <h3 className="font-bold text-lg text-teal-900">{team.name}</h3>
+                      <span className="text-xs bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full">{team.members.length} members</span>
+                    </div>
+                    <button
+                      onClick={() => setTeamSignUpTeamId(teamSignUpTeamId === team.id ? null : team.id)}
+                      className="bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-800"
+                    >
+                      Sign Up Whole Team for Shift
+                    </button>
                   </div>
-                </div>
+
+                  {/* Whole-team shift sign-up panel */}
+                  {teamSignUpTeamId === team.id && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+                      <h4 className="font-medium text-amber-900 mb-3">Choose a shift for your whole team:</h4>
+                      <div className="space-y-2 max-h-60 overflow-y-auto">
+                        {shifts.filter((s) => s.capacity - s.assignments.length > 0).map((s) => (
+                          <div key={s.id} className="flex items-center justify-between bg-white rounded-lg p-3 border border-amber-100">
+                            <div>
+                              <span className="font-medium text-amber-900">{s.title}</span>
+                              {s.category && <span className="ml-2 text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{s.category.name}</span>}
+                              <p className="text-xs text-gray-500">{fmt12(s.startTime)} - {fmt12(s.endTime)} &middot; {s.capacity - s.assignments.length} spots open</p>
+                            </div>
+                            <button
+                              onClick={() => handleTeamSignUp(team.id, s.id)}
+                              className="bg-amber-700 text-white px-3 py-1.5 rounded text-xs font-medium hover:bg-amber-800"
+                            >
+                              Sign Up Team
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Drag-to-assign: available shifts palette */}
+                  <div className="mb-4">
+                    <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">Drag a shift onto a member to assign</p>
+                    <div className="flex flex-wrap gap-2">
+                      {shifts.filter((s) => s.capacity - s.assignments.length > 0).map((s) => (
+                        <div
+                          key={s.id}
+                          draggable
+                          onDragStart={() => setDragShiftId(s.id)}
+                          onDragEnd={() => { setDragShiftId(null); setDragOverMemberId(null); }}
+                          className={`cursor-grab active:cursor-grabbing bg-amber-50 border border-amber-300 text-amber-900 text-xs px-2.5 py-1 rounded-full select-none ${dragShiftId === s.id ? "opacity-50" : ""}`}
+                        >
+                          📋 {s.title} {fmt12(s.startTime)}
+                        </div>
+                      ))}
+                    </div>
+                    {shifts.filter((s) => s.capacity - s.assignments.length > 0).length === 0 && (
+                      <p className="text-xs text-gray-400">No open shifts available</p>
+                    )}
+                  </div>
+
+                  {/* Team Members (drop targets) */}
+                  <div className="space-y-2">
+                    {team.members.map((tm) => {
+                      const isLeader = tm.volunteer.id === volunteer?.id;
+                      const memberShifts = (tm.volunteer.assignments || []).filter((a) => a.status === "confirmed");
+                      const isOver = dragOverMemberId === tm.volunteer.id;
+                      return (
+                        <div
+                          key={tm.id}
+                          onDragOver={(e) => { if (dragShiftId) { e.preventDefault(); setDragOverMemberId(tm.volunteer.id); } }}
+                          onDragLeave={() => setDragOverMemberId(null)}
+                          onDrop={async () => { if (dragShiftId) await handleDragAssign(tm.volunteer.id, dragShiftId); }}
+                          className={`rounded-lg p-3 text-sm transition-colors ${isOver && dragShiftId ? "bg-teal-100 border-2 border-teal-400 border-dashed" : isLeader ? "bg-teal-50 border border-teal-200" : "bg-gray-50 border border-gray-200"}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1 font-medium">
+                              {isLeader && <span className="text-teal-600 text-xs font-bold">TL</span>}
+                              {tm.volunteer.name}
+                              {isOver && dragShiftId && <span className="text-teal-600 text-xs ml-1">← drop here</span>}
+                            </div>
+                            {!isLeader && (
+                              <button
+                                onClick={async () => {
+                                  await fetch("/api/teams", {
+                                    method: "PUT",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ id: team.id, removeMembers: [tm.volunteer.id], requesterId: volunteer?.id }),
+                                  });
+                                  refreshData();
+                                }}
+                                className="text-red-400 hover:text-red-600 text-xs font-medium shrink-0"
+                              >Remove</button>
+                            )}
+                          </div>
+                          {memberShifts.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              {memberShifts.map((a) => (
+                                <span key={a.id} className="text-xs bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full">
+                                  {a.shift.title} {fmt12(a.shift.startTime)}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {memberShifts.length === 0 && (
+                            <p className="text-xs text-gray-400 mt-1">{dragShiftId ? "Drop here to assign" : "No shifts assigned"}</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Add new members inline */}
+                  <div className="mt-3 flex gap-2">
+                    <input
+                      placeholder="Add member by name..."
+                      className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-teal-400 outline-none"
+                      onKeyDown={async (e) => {
+                        if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
+                          const memberName = (e.target as HTMLInputElement).value.trim();
+                          await fetch("/api/teams", {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ id: team.id, addMembers: [{ name: memberName }], requesterId: volunteer?.id }),
+                          });
+                          (e.target as HTMLInputElement).value = "";
+                          refreshData();
+                        }
+                      }}
+                    />
+                    <span className="text-xs text-gray-400 self-center whitespace-nowrap">Press Enter to add</span>
+                  </div>
+                </>
               )}
 
-              {/* Team Members */}
-              <div className="space-y-2">
-                {team.members.map((tm) => {
-                  const isLeader = tm.volunteer.id === volunteer?.id;
-                  const memberShifts = (tm.volunteer.assignments || []).filter((a) => a.status === "confirmed");
-                  return (
-                    <div key={tm.id} className={`rounded-lg p-3 text-sm ${isLeader ? "bg-teal-50 border border-teal-200" : "bg-gray-50 border border-gray-200"}`}>
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1 font-medium">
-                          {isLeader && <span className="text-teal-600 text-xs font-bold">TL</span>}
-                          {tm.volunteer.name}
-                        </div>
-                        {!isLeader && (
-                          <button
-                            onClick={async () => {
-                              await fetch("/api/teams", {
-                                method: "PUT",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ id: team.id, removeMembers: [tm.volunteer.id], requesterId: volunteer?.id }),
-                              });
-                              refreshData();
-                            }}
-                            className="text-red-400 hover:text-red-600 text-xs font-medium shrink-0"
-                            title="Remove from team"
-                          >Remove</button>
-                        )}
-                      </div>
-                      {memberShifts.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1.5">
-                          {memberShifts.map((a) => (
-                            <span key={a.id} className="text-xs bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full">
-                              {a.shift.title} {fmt12(a.shift.startTime)}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {memberShifts.length === 0 && !isLeader && (
-                        <p className="text-xs text-gray-400 mt-1">No shifts assigned</p>
-                      )}
+              {/* ── MY TEAM SCHEDULE sub-tab ── */}
+              {teamSubTab === "schedule" && (
+                <>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-bold text-lg text-teal-900">{team.name} — Schedule</h3>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => exportTeamCsv(team)}
+                        className="bg-gray-100 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-gray-200"
+                      >⬇ Export CSV</button>
+                      <button
+                        onClick={() => printTeamSchedule(team)}
+                        className="bg-teal-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-teal-800"
+                      >🖨 Print</button>
                     </div>
-                  );
-                })}
-              </div>
-
-              {/* Add new members inline */}
-              <div className="mt-3 flex gap-2">
-                <input
-                  placeholder="Add member by name..."
-                  className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-teal-400 outline-none"
-                  onKeyDown={async (e) => {
-                    if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
-                      const memberName = (e.target as HTMLInputElement).value.trim();
-                      await fetch("/api/teams", {
-                        method: "PUT",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ id: team.id, addMembers: [{ name: memberName }], requesterId: volunteer?.id }),
-                      });
-                      (e.target as HTMLInputElement).value = "";
-                      refreshData();
-                    }
-                  }}
-                />
-                <span className="text-xs text-gray-400 self-center whitespace-nowrap">Press Enter to add</span>
-              </div>
+                  </div>
+                  <div className="space-y-3">
+                    {team.members.map((tm) => {
+                      const isMe = tm.volunteer.id === volunteer?.id;
+                      const memberShifts = (tm.volunteer.assignments || []).filter((a) => a.status === "confirmed");
+                      const pending = (tm.volunteer.assignments || []).filter((a) => a.status === "pending");
+                      return (
+                        <div key={tm.id} className={`rounded-xl border p-4 ${isMe ? "bg-teal-50 border-teal-200" : "bg-white border-gray-200"}`}>
+                          <p className="font-semibold text-sm text-gray-800 mb-2">
+                            {isMe ? <span className="text-teal-700">👑 {tm.volunteer.name} (you)</span> : tm.volunteer.name}
+                          </p>
+                          {memberShifts.length === 0 && pending.length === 0 ? (
+                            <p className="text-xs text-gray-400">No shifts assigned yet</p>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                              {memberShifts.map((a) => (
+                                <span key={a.id} className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium">
+                                  ✓ {a.shift.title} {fmt12(a.shift.startTime)}–{fmt12(a.shift.endTime)}
+                                </span>
+                              ))}
+                              {pending.map((a) => (
+                                <span key={a.id} className="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full">
+                                  ⏳ {a.shift.title} {fmt12(a.shift.startTime)}–{fmt12(a.shift.endTime)}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </div>
           ))}
         </div>
