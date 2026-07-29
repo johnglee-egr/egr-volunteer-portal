@@ -139,27 +139,72 @@ async function crossAssignPair(idA: string, idB: string): Promise<void> {
   // Shifts B is on that A isn't → add A
   const toAddToA = assignmentsB.filter((a) => !shiftIdsA.has(a.shiftId));
 
-  const upserts: Promise<unknown>[] = [];
+  /**
+   * Place the partner at the same station as the person they're paired with —
+   * standing together is the entire point of a pair. Previously the station was
+   * left null, so on a stationed shift the second half of every pair printed
+   * with a blank Station column and no idea where to go.
+   *
+   * Falls back to the next station with room if the partner's is full, and to
+   * the partner's station regardless if the shift is completely full (the admin
+   * approved the pair, so keeping them together beats an empty cell).
+   */
+  const placeWith = async (shiftId: string, partnerStation: number | null) => {
+    if (partnerStation === null) return undefined; // unstationed shift
+    const shift = await prisma.shift.findUnique({
+      where: { id: shiftId },
+      include: { category: true, assignments: { where: { status: "confirmed" } } },
+    });
+    const stationCount = shift?.category?.stationCount ?? 0;
+    const volsPer = shift?.category?.volsPerStation ?? 1;
+    if (!shift || stationCount <= 1) return undefined;
+
+    const occupancy = new Map<number, number>();
+    for (const a of shift.assignments) {
+      if (a.stationIndex != null) occupancy.set(a.stationIndex, (occupancy.get(a.stationIndex) || 0) + 1);
+    }
+    if ((occupancy.get(partnerStation) || 0) < volsPer) return partnerStation;
+    for (let i = 0; i < stationCount; i++) {
+      if ((occupancy.get(i) || 0) < volsPer) return i;
+    }
+    return partnerStation;
+  };
 
   for (const a of toAddToB) {
-    upserts.push(
-      prisma.assignment.upsert({
-        where: { volunteerId_shiftId: { volunteerId: idB, shiftId: a.shiftId } },
-        update: { status: "confirmed", assignedBy: "pair-auto" },
-        create: { volunteerId: idB, shiftId: a.shiftId, status: "confirmed", assignedBy: "pair-auto" },
-      })
-    );
+    const station = await placeWith(a.shiftId, a.stationIndex);
+    await prisma.assignment.upsert({
+      where: { volunteerId_shiftId: { volunteerId: idB, shiftId: a.shiftId } },
+      update: {
+        status: "confirmed",
+        assignedBy: "pair-auto",
+        ...(station !== undefined ? { stationIndex: station } : {}),
+      },
+      create: {
+        volunteerId: idB,
+        shiftId: a.shiftId,
+        status: "confirmed",
+        assignedBy: "pair-auto",
+        ...(station !== undefined ? { stationIndex: station } : {}),
+      },
+    });
   }
 
   for (const a of toAddToA) {
-    upserts.push(
-      prisma.assignment.upsert({
-        where: { volunteerId_shiftId: { volunteerId: idA, shiftId: a.shiftId } },
-        update: { status: "confirmed", assignedBy: "pair-auto" },
-        create: { volunteerId: idA, shiftId: a.shiftId, status: "confirmed", assignedBy: "pair-auto" },
-      })
-    );
+    const station = await placeWith(a.shiftId, a.stationIndex);
+    await prisma.assignment.upsert({
+      where: { volunteerId_shiftId: { volunteerId: idA, shiftId: a.shiftId } },
+      update: {
+        status: "confirmed",
+        assignedBy: "pair-auto",
+        ...(station !== undefined ? { stationIndex: station } : {}),
+      },
+      create: {
+        volunteerId: idA,
+        shiftId: a.shiftId,
+        status: "confirmed",
+        assignedBy: "pair-auto",
+        ...(station !== undefined ? { stationIndex: station } : {}),
+      },
+    });
   }
-
-  await Promise.all(upserts);
 }
