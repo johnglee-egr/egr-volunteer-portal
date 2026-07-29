@@ -207,4 +207,24 @@ async function crossAssignPair(idA: string, idB: string): Promise<void> {
       },
     });
   }
+
+  // Backfill shifts the pair ALREADY share where one of them has no station.
+  // These are skipped by the loops above (nothing to add), which is how records
+  // created before the station fix keep printing a blank Station column.
+  const shared = assignmentsA.filter((a) => shiftIdsB.has(a.shiftId));
+  for (const a of shared) {
+    const b = assignmentsB.find((x) => x.shiftId === a.shiftId);
+    if (!b) continue;
+    if (a.stationIndex == null && b.stationIndex != null) {
+      const station = await placeWith(a.shiftId, b.stationIndex);
+      if (station !== undefined) {
+        await prisma.assignment.update({ where: { id: a.id }, data: { stationIndex: station } });
+      }
+    } else if (b.stationIndex == null && a.stationIndex != null) {
+      const station = await placeWith(b.shiftId, a.stationIndex);
+      if (station !== undefined) {
+        await prisma.assignment.update({ where: { id: b.id }, data: { stationIndex: station } });
+      }
+    }
+  }
 }
