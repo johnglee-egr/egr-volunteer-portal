@@ -372,7 +372,7 @@ export default function VolunteerPortal() {
     const [volRes, shiftRes, teamRes] = await Promise.all([
       fetch(`/api/volunteers/${volId}`),
       fetch("/api/shifts"),
-      fetch("/api/teams"),
+      fetch(`/api/teams?requesterId=${volId}`),
     ]);
     if (volRes.ok) {
       const volData = await volRes.json();
@@ -396,7 +396,7 @@ export default function VolunteerPortal() {
 
   // Load teams when logging in
   const loadTeams = async (volId: string) => {
-    const res = await fetch("/api/teams");
+    const res = await fetch(`/api/teams?requesterId=${volId}`);
     if (res.ok) applyTeams(await res.json(), volId);
   };
 

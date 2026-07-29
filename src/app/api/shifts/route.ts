@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { isAdmin } from "@/lib/auth";
 
 export async function GET() {
   const shifts = await prisma.shift.findMany({
@@ -12,7 +13,26 @@ export async function GET() {
     },
     orderBy: [{ date: "asc" }, { startTime: "asc" }],
   });
-  return NextResponse.json(shifts);
+
+  // This endpoint is public — the volunteer portal reads it before anyone logs
+  // in. It only needs names to render capacity, so strip contact details for
+  // non-admin callers rather than publishing the roster's phones and emails.
+  const callerIsAdmin = await isAdmin();
+  if (callerIsAdmin) return NextResponse.json(shifts);
+
+  const redacted = shifts.map((s) => ({
+    ...s,
+    assignments: s.assignments.map((a) => ({
+      ...a,
+      volunteer: {
+        id: a.volunteer.id,
+        name: a.volunteer.name,
+        role: a.volunteer.role,
+        isOver21: a.volunteer.isOver21,
+      },
+    })),
+  }));
+  return NextResponse.json(redacted);
 }
 
 export async function POST(req: NextRequest) {

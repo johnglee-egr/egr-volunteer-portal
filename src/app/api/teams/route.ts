@@ -75,13 +75,48 @@ async function upsertMemberVolunteer(m: MemberInput) {
   return vol;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const teams = await prisma.team.findMany({
       include: teamInclude,
       orderBy: { createdAt: "desc" },
     });
-    return NextResponse.json(teams);
+
+    // Public endpoint — the "Join a Team" picker reads it before login. Admins
+    // see everything; a volunteer sees contact details only for teams they
+    // actually belong to. Everyone else gets names and counts, no phones/emails.
+    const callerIsAdmin = await isAdmin();
+    if (callerIsAdmin) return NextResponse.json(teams);
+
+    const requesterId = req.nextUrl.searchParams.get("requesterId") || "";
+
+    const scrub = (v: Record<string, unknown>) => ({
+      id: v.id,
+      name: v.name,
+      role: v.role,
+      isOver21: v.isOver21,
+      captainClaimsOver21: v.captainClaimsOver21,
+      smsConsent: v.smsConsent,
+      smsOptOutAt: v.smsOptOutAt,
+      assignments: v.assignments,
+    });
+
+    const scoped = teams.map((t) => {
+      const belongs =
+        !!requesterId &&
+        (t.leaderId === requesterId || t.members.some((m) => m.volunteer.id === requesterId));
+      if (belongs) return t;
+      return {
+        ...t,
+        leader: t.leader ? scrub(t.leader as unknown as Record<string, unknown>) : t.leader,
+        members: t.members.map((m) => ({
+          ...m,
+          volunteer: scrub(m.volunteer as unknown as Record<string, unknown>),
+        })),
+      };
+    });
+
+    return NextResponse.json(scoped);
   } catch (e: unknown) {
     console.error("GET /api/teams error:", e);
     return NextResponse.json({ error: String(e) }, { status: 500 });
