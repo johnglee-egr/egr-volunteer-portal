@@ -13,7 +13,7 @@ import { prisma } from "@/lib/db";
  * identifies people by name + phone lookup rather than a session).
  */
 export async function POST(req: NextRequest) {
-  const { volunteerId, smsConsent, smsConsentText } = await req.json();
+  const { volunteerId, smsConsent, smsConsentText, isOver21 } = await req.json();
 
   if (!volunteerId) {
     return NextResponse.json({ error: "Volunteer ID required" }, { status: 400 });
@@ -22,6 +22,17 @@ export async function POST(req: NextRequest) {
   const volunteer = await prisma.volunteer.findUnique({ where: { id: volunteerId } });
   if (!volunteer) {
     return NextResponse.json({ error: "Volunteer not found" }, { status: 404 });
+  }
+
+  // Self-service age verification. Volunteers created by a captain (name only)
+  // arrive with isOver21 = null, which blocks them from alcohol-service shifts
+  // until they answer for themselves.
+  if (isOver21 === true || isOver21 === false) {
+    const updated = await prisma.volunteer.update({
+      where: { id: volunteerId },
+      data: { isOver21 },
+    });
+    return NextResponse.json({ ok: true, isOver21: updated.isOver21 });
   }
 
   if (smsConsent === true) {

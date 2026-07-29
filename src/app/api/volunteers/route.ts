@@ -36,6 +36,14 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
+  // Age verification is required at self-registration — alcohol-service
+  // categories are gated on it, so an unanswered value silently blocks people.
+  if (isOver21 !== true && isOver21 !== false) {
+    return NextResponse.json(
+      { error: "Please tell us whether you are 21 or older — it determines which roles you can sign up for." },
+      { status: 400 }
+    );
+  }
 
   // Validate contactPref — only meaningful when the volunteer provided both channels
   const validPrefs = ["both", "email", "sms"];

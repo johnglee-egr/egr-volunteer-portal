@@ -26,7 +26,7 @@ interface TeamMember {
   id: string;
   volunteer: {
     id: string; name: string; email?: string; phone?: string;
-    assignments?: Assignment[]; role?: string;
+    assignments?: Assignment[]; role?: string; isOver21?: boolean | null;
     smsConsent?: boolean | null; smsOptOutAt?: string | null;
   };
 }
@@ -57,6 +57,7 @@ interface Volunteer {
   phone?: string;
   role?: string;
   pendingRole?: string | null;
+  isOver21?: boolean | null;
   smsConsent?: boolean | null;
   smsOptOutAt?: string | null;
   assignments: Assignment[];
@@ -184,6 +185,10 @@ export default function VolunteerPortal() {
     }
     if (!phone) {
       setError("A phone number is required so we can send you shift reminders.");
+      return;
+    }
+    if (isOver21 === null) {
+      setError("Please tell us whether you are 21 or older — it determines which roles you can sign up for.");
       return;
     }
     setRegisterLoading(true);
@@ -481,6 +486,25 @@ export default function VolunteerPortal() {
     setMemberSignUpModal(null);
     setSuccess(`Signed up ${count} member${count !== 1 ? "s" : ""} for ${shift.title}!`);
     refreshData();
+  };
+
+  // Answer the 21+ question after the fact. Volunteers a captain added by name
+  // arrive with no age on file, which silently blocks alcohol-service shifts.
+  const handleSetAge = async (over21: boolean) => {
+    if (!volunteer) return;
+    setError("");
+    const res = await fetch("/api/volunteers/consent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ volunteerId: volunteer.id, isOver21: over21 }),
+    });
+    if (res.ok) {
+      setSuccess(over21 ? "Thanks! You can now sign up for 21+ roles." : "Thanks — we've noted that.");
+      refreshData();
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setError(d.error || "Could not save your answer.");
+    }
   };
 
   // A volunteer opts themselves in to SMS from their own dashboard. This is the
@@ -843,10 +867,15 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
               </p>
             </div>
 
-            {/* 21+ age verification */}
+            {/* 21+ age verification — required, gates alcohol-service roles */}
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-2">
-              <p className="text-sm font-semibold text-amber-900">🍺 Are you 21 years of age or older?</p>
-              <p className="text-xs text-amber-700">Required if you wish to volunteer for beer pouring or alcohol service roles.</p>
+              <p className="text-sm font-semibold text-amber-900">
+                🍺 Are you 21 years of age or older? <span className="text-red-600">*</span>
+              </p>
+              <p className="text-xs text-amber-700">
+                Required. Michigan law limits beer pouring and alcohol service to volunteers who
+                are 21 or older — your answer decides which roles you can sign up for.
+              </p>
               <div className="flex gap-4 mt-1">
                 <label className={`flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 transition-colors text-sm font-medium ${
                   isOver21 === true ? "border-amber-500 bg-white text-amber-900" : "border-gray-200 bg-white text-gray-600 hover:border-amber-300"
@@ -1379,6 +1408,32 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
         </div>
       )}
 
+      {/* Age verification prompt — shown to anyone with no answer on file
+          (typically added to a team by name). Gates alcohol-service roles. */}
+      {volunteer && (volunteer.isOver21 === null || volunteer.isOver21 === undefined) && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1">
+              <p className="font-semibold text-amber-900 text-sm mb-1">🍺 Are you 21 years of age or older?</p>
+              <p className="text-xs text-amber-800">
+                We don&apos;t have an answer on file for you. Beer pouring and alcohol service are
+                limited to volunteers 21 and older — until you answer, those shifts stay locked.
+              </p>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <button
+                onClick={() => handleSetAge(true)}
+                className="bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-amber-800 transition-colors"
+              >Yes, I&apos;m 21+</button>
+              <button
+                onClick={() => handleSetAge(false)}
+                className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+              >Under 21</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* SMS opt-in prompt — shown to anyone with a phone who hasn't consented.
           This is how teammates added by a captain enroll themselves. */}
       {volunteer?.phone && !volunteer?.smsConsent && !volunteer?.smsOptOutAt && (
@@ -1526,6 +1581,10 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                 const isPending = volunteer?.assignments.some(
                   (a) => a.shiftId === shift.id && a.status === "pending"
                 );
+                // Alcohol-service categories are 21+. Block in the UI rather than
+                // letting the server reject the request after the click.
+                const needs21 = shift.category?.requiresOver21 === true;
+                const ageBlocked = needs21 && volunteer?.isOver21 !== true;
 
                 return (
                   <div key={shift.id} className="bg-white rounded-lg shadow-sm border border-amber-100 p-5">
@@ -1586,7 +1645,16 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                           </button>
                         )}
                         {myTeams.length === 0 && !isConfirmed && !isPending && (
-                          available > 0 ? (
+                          ageBlocked ? (
+                            <span className="bg-gray-100 text-gray-500 px-3 py-2 rounded-lg text-xs font-medium inline-block text-center max-w-[190px]">
+                              🍺 21+ only
+                              <span className="block font-normal mt-0.5">
+                                {volunteer?.isOver21 === false
+                                  ? "This role serves alcohol."
+                                  : "Tell us your age above to unlock."}
+                              </span>
+                            </span>
+                          ) : available > 0 ? (
                             <button
                               onClick={() => handleSignUp(shift.id)}
                               className="bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-800 transition-colors"
@@ -1827,7 +1895,11 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                     (a) => a.status === "confirmed" && a.shiftId !== shift.id &&
                       timesOverlap(shift.startTime, shift.endTime, a.shift.startTime, a.shift.endTime)
                   );
-                  const blocked = alreadyOn || !!conflict;
+                  // 21+ categories: a captain cannot put an under-21 (or
+                  // unverified) teammate on an alcohol-service shift.
+                  const tooYoung = shift.category?.requiresOver21 === true
+                    && tm.volunteer.isOver21 !== true;
+                  const blocked = alreadyOn || !!conflict || tooYoung;
                   return (
                     <label key={tm.id} className={`flex items-start gap-3 rounded-lg p-2.5 ${blocked ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-amber-50"}`}>
                       <input
@@ -1845,7 +1917,12 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                       <span className="text-sm font-medium text-gray-800">
                         {tm.volunteer.name}{isMe ? " (you)" : ""}
                         {alreadyOn && <span className="block text-xs text-green-600 font-normal">✓ already on this shift</span>}
-                        {!alreadyOn && conflict && (
+                        {!alreadyOn && tooYoung && (
+                          <span className="block text-xs text-amber-600 font-normal">
+                            🍺 {tm.volunteer.isOver21 === false ? "under 21 — can't serve alcohol" : "age not confirmed — they must sign in and answer"}
+                          </span>
+                        )}
+                        {!alreadyOn && !tooYoung && conflict && (
                           <span className="block text-xs text-red-500 font-normal">
                             ✕ already on {conflict.shift.title} ({fmt12(conflict.shift.startTime)}–{fmt12(conflict.shift.endTime)})
                           </span>
