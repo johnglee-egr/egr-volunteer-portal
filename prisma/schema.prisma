@@ -15,7 +15,11 @@ model Volunteer {
   role             String                @default("volunteer") // volunteer, team_lead
   pendingRole      String?               // role awaiting admin approval e.g. "team_lead"
   contactPref      String                @default("both") // both | email | sms
-  isOver21         Boolean?              // null = not answered, true = yes, false = no
+  isOver21         Boolean?              // SELF-declared only. null = not answered.
+  // What a team captain asserted about this member on "Build Your Team".
+  // Advisory only — never satisfies the 21+ gate on alcohol-service shifts,
+  // since it is a third party's unverified claim about someone else.
+  captainClaimsOver21 Boolean?
   // A2P 10DLC consent audit trail. Carriers can require proof of opt-in, so we
   // record whether consent was given, when, and the exact wording shown.
   smsConsent       Boolean               @default(false)

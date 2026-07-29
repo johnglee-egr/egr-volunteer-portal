@@ -45,7 +45,10 @@ async function upsertMemberVolunteer(m: MemberInput) {
     });
   }
 
-  const isOver21 = m.isOver21 === true ? true : m.isOver21 === false ? false : null;
+  // A captain's 21+ tick is a third party's unverified claim about someone
+  // else, so it is recorded separately and never written to isOver21 — that
+  // field gates alcohol service and must come from the person themselves.
+  const claim = m.isOver21 === true ? true : m.isOver21 === false ? false : null;
 
   if (!vol) {
     return prisma.volunteer.create({
@@ -53,18 +56,19 @@ async function upsertMemberVolunteer(m: MemberInput) {
         name,
         email: m.email || null,
         phone: rawPhone ? normalizePhone(rawPhone) : null,
-        isOver21,
+        isOver21: null,
+        captainClaimsOver21: claim,
         // contactPref stays email-only until the person opts in to SMS themselves
         contactPref: "email",
       },
     });
   }
 
-  // Backfill a phone or 21+ answer we didn't previously have, but never
-  // overwrite details the volunteer supplied about themselves.
-  const patch: { phone?: string; isOver21?: boolean } = {};
+  // Backfill details we didn't previously have, but never overwrite what the
+  // volunteer supplied about themselves.
+  const patch: { phone?: string; captainClaimsOver21?: boolean } = {};
   if (rawPhone && !vol.phone) patch.phone = normalizePhone(rawPhone);
-  if (isOver21 !== null && vol.isOver21 === null) patch.isOver21 = isOver21;
+  if (claim !== null && vol.captainClaimsOver21 === null) patch.captainClaimsOver21 = claim;
   if (Object.keys(patch).length > 0) {
     return prisma.volunteer.update({ where: { id: vol.id }, data: patch });
   }

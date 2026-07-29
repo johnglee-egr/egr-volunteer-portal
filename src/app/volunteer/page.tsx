@@ -27,6 +27,7 @@ interface TeamMember {
   volunteer: {
     id: string; name: string; email?: string; phone?: string;
     assignments?: Assignment[]; role?: string; isOver21?: boolean | null;
+    captainClaimsOver21?: boolean | null;
     smsConsent?: boolean | null; smsOptOutAt?: string | null;
   };
 }
@@ -146,6 +147,7 @@ export default function VolunteerPortal() {
   // Inline "add member" fields on the roster
   const [addMemberName, setAddMemberName] = useState("");
   const [addMemberPhone, setAddMemberPhone] = useState("");
+  const [addMemberOver21, setAddMemberOver21] = useState(false);
 
   useEffect(() => {
     fetch("/api/shifts").then((r) => r.json()).then(setShifts);
@@ -600,13 +602,18 @@ export default function VolunteerPortal() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         id: teamId,
-        addMembers: [{ name, phone: addMemberPhone.trim() || null }],
+        addMembers: [{
+          name,
+          phone: addMemberPhone.trim() || null,
+          isOver21: addMemberOver21 ? true : null,
+        }],
         requesterId: volunteer?.id,
       }),
     });
     if (res.ok) {
       setAddMemberName("");
       setAddMemberPhone("");
+      setAddMemberOver21(false);
       setSuccess(`${name} added to the team.`);
       refreshData();
     } else {
@@ -2375,14 +2382,41 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                                   <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-normal" title="This member opted in to text reminders">
                                     📱 texts on
                                   </span>
+                                ) : tm.volunteer.smsOptOutAt ? (
+                                  <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-normal" title="They declined text reminders">
+                                    texts declined
+                                  </span>
                                 ) : (
-                                  <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-normal" title="They must turn on texts themselves — we can't do it for them">
-                                    texts off
+                                  <span className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded-full font-normal" title="Not asked yet — they need to sign in and opt in themselves">
+                                    texts pending
                                   </span>
                                 )
                               )}
                               {!tm.volunteer.phone && (
-                                <span className="text-xs bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded-full font-normal">no phone</span>
+                                <span className="text-xs bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded-full font-normal" title="No phone number on file — add one so we can reach them">no phone</span>
+                              )}
+                              {/* Age eligibility — the captain enters this at team
+                                  creation and otherwise never sees it again. */}
+                              {tm.volunteer.isOver21 === true ? (
+                                <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-normal" title="Confirmed 21+ by the volunteer — can pour">
+                                  🍺 21+
+                                </span>
+                              ) : tm.volunteer.isOver21 === false ? (
+                                <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-normal" title="Confirmed under 21 — cannot serve alcohol">
+                                  under 21
+                                </span>
+                              ) : tm.volunteer.captainClaimsOver21 === true ? (
+                                <span className="text-xs bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full font-normal" title="You marked them 21+, but they must confirm it themselves before they can be put on a pouring shift">
+                                  🍺 21+ unconfirmed
+                                </span>
+                              ) : tm.volunteer.captainClaimsOver21 === false ? (
+                                <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-normal" title="You marked them under 21">
+                                  under 21 (your note)
+                                </span>
+                              ) : (
+                                <span className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded-full font-normal" title="No age on file — they must sign in and answer before pouring shifts unlock">
+                                  age unknown
+                                </span>
                               )}
                               {isOver && dragShiftId && <span className="text-teal-600 text-xs ml-1">← drop here</span>}
                             </div>
@@ -2460,6 +2494,15 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                       className="flex-1 min-w-[130px] border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-teal-400 outline-none"
                       onKeyDown={(e) => { if (e.key === "Enter") handleAddMember(team.id); }}
                     />
+                    <label className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={addMemberOver21}
+                        onChange={(e) => setAddMemberOver21(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-amber-600"
+                      />
+                      21+
+                    </label>
                     <button
                       onClick={() => handleAddMember(team.id)}
                       disabled={!addMemberName.trim()}
