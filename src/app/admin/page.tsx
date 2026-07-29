@@ -175,6 +175,14 @@ export default function AdminDashboard() {
   // "Add to Team" bulk action
   const [addToTeamModal, setAddToTeamModal] = useState(false);
   const [addToTeamId, setAddToTeamId] = useState<string>("");
+  // Edit a volunteer's own details. Without this, correcting a typo'd phone or a
+  // wrong 21+ answer meant deleting the person and losing their assignments,
+  // partner link and team membership.
+  const [editVol, setEditVol] = useState<Volunteer | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editOver21, setEditOver21] = useState<boolean | null>(null);
   // Team member expand/collapse (Volunteers tab)
   const [expandedTeamIds, setExpandedTeamIds] = useState<Set<string>>(new Set());
   // Volunteer search (Volunteers tab)
@@ -1183,6 +1191,65 @@ export default function AdminDashboard() {
     setSuccess(`${volAName} and ${volBName} are now partners!`);
   };
 
+  /**
+   * Shifts a volunteer is already confirmed on that overlap the given shift in
+   * time. Double-booking is sometimes legitimate (a roving helper), so callers
+   * warn rather than block — but silently accepting it, as the app did before,
+   * meant one person could be scheduled in two places with nothing flagging it.
+   */
+  const overlappingShifts = (volunteerId: string, shiftId: string) => {
+    const target = shifts.find((s) => s.id === shiftId);
+    if (!target) return [];
+    return shifts.filter(
+      (s) =>
+        s.id !== shiftId &&
+        s.startTime < target.endTime &&
+        target.startTime < s.endTime &&
+        s.assignments.some((a) => a.volunteerId === volunteerId && a.status === "confirmed")
+    );
+  };
+
+  // Open the edit form for one volunteer
+  const openEditVol = (v: Volunteer) => {
+    setEditVol(v);
+    setEditName(v.name || "");
+    setEditPhone(v.phone || "");
+    setEditEmail(v.email || "");
+    setEditOver21(v.isOver21 === true ? true : v.isOver21 === false ? false : null);
+  };
+
+  const handleSaveVol = async () => {
+    if (!editVol) return;
+    clearMessages();
+    const name = editName.trim();
+    if (!name) { setError("Name can't be empty."); return; }
+    if (editPhone && editPhone.replace(/\D/g, "").length !== 10) {
+      setError("Please enter a valid 10-digit phone number, or clear the field.");
+      return;
+    }
+
+    const res = await fetch("/api/volunteers", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: editVol.id,
+        name,
+        phone: editPhone.trim() || null,
+        email: editEmail.trim() || null,
+        isOver21: editOver21,
+      }),
+    });
+
+    if (res.ok) {
+      setEditVol(null);
+      await loadData();
+      setSuccess(`${name} updated.`);
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setError(d.error || "Could not save changes.");
+    }
+  };
+
   // Add the selected volunteers to an existing team
   const handleAddToTeam = async () => {
     if (!addToTeamId) return;
@@ -1618,9 +1685,35 @@ export default function AdminDashboard() {
           <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-medium">
             {volunteers.length} volunteer{volunteers.length !== 1 ? "s" : ""} signed up
           </span>
-          <span className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full font-medium">
-            {shifts.reduce((sum, s) => sum + s.assignments.filter((a: {status:string}) => a.status === "confirmed").length, 0)} of {shifts.reduce((sum, s) => sum + s.capacity, 0)} volunteers assigned
-          </span>
+          {/* This counts SLOTS, not people — a volunteer on two shifts fills two
+              of them, and adding a category raises the denominator with nobody
+              new signed up. Labelled accordingly, with the distinct headcount of
+              people actually holding at least one shift shown separately. */}
+          {(() => {
+            const filled = shifts.reduce(
+              (sum, s) => sum + s.assignments.filter((a: { status: string }) => a.status === "confirmed").length,
+              0
+            );
+            const capacity = shifts.reduce((sum, s) => sum + s.capacity, 0);
+            const peopleScheduled = new Set(
+              shifts.flatMap((s) =>
+                s.assignments
+                  .filter((a: { status: string }) => a.status === "confirmed")
+                  .map((a) => a.volunteerId)
+              )
+            ).size;
+            const pct = capacity > 0 ? Math.round((filled / capacity) * 100) : 0;
+            return (
+              <>
+                <span className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full font-medium" title="Shift slots filled across all categories. Someone on two shifts fills two slots.">
+                  {filled} of {capacity} shift slots filled ({pct}%)
+                </span>
+                <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full font-medium" title="Distinct volunteers holding at least one confirmed shift">
+                  {peopleScheduled} scheduled
+                </span>
+              </>
+            );
+          })()}
         </div>
       </div>
 
@@ -2152,6 +2245,15 @@ export default function AdminDashboard() {
                 disabled={!bulkAssignShiftId}
                 onClick={async () => {
                   clearMessages();
+                  // Warn about time conflicts before committing — the coordinator
+                  // may still want it, but should know it's happening.
+                  const clashes = Array.from(selectedVolIds).flatMap((id) => {
+                    const conflicts = overlappingShifts(id, bulkAssignShiftId);
+                    if (conflicts.length === 0) return [];
+                    const who = volunteers.find((v: Volunteer) => v.id === id)?.name || "Someone";
+                    return [`${who} is already on ${conflicts.map((c) => `${c.title} (${fmt12(c.startTime)}–${fmt12(c.endTime)})`).join(", ")}`];
+                  });
+                  const doBulkAssign = async () => {
                   const res = await fetch("/api/assignments/bulk", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -2177,6 +2279,17 @@ export default function AdminDashboard() {
                   } else {
                     const data = await res.json();
                     setError(data.error || "Bulk assign failed.");
+                  }
+                  };
+
+                  if (clashes.length > 0) {
+                    showConfirm(
+                      `Time conflict: ${clashes.join("; ")}. Assign anyway?`,
+                      doBulkAssign,
+                      "Yes, Assign Anyway"
+                    );
+                  } else {
+                    await doBulkAssign();
                   }
                 }}
                 className="bg-green-600 text-white px-2 py-1 rounded text-xs font-medium hover:bg-green-700 disabled:opacity-50"
@@ -2599,6 +2712,13 @@ export default function AdminDashboard() {
                         <td className="px-4 py-3">
                           <div className="flex gap-2">
                             <button
+                              onClick={() => openEditVol(v as Volunteer)}
+                              className="bg-teal-100 text-teal-700 px-3 py-1 rounded text-xs font-medium hover:bg-teal-200"
+                              title="Edit name, phone, email or 21+ status"
+                            >
+                              ✏️ Edit
+                            </button>
+                            <button
                               onClick={() => setManagingAssignmentsFor(v as Volunteer & { assignments?: Assignment[] })}
                               className="bg-amber-100 text-amber-700 px-3 py-1 rounded text-xs font-medium hover:bg-amber-200"
                             >
@@ -2774,6 +2894,13 @@ export default function AdminDashboard() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-2">
+                          <button
+                            onClick={() => openEditVol(v as Volunteer)}
+                            className="bg-teal-100 text-teal-700 px-3 py-1 rounded text-xs font-medium hover:bg-teal-200"
+                            title="Edit name, phone, email or 21+ status"
+                          >
+                            ✏️ Edit
+                          </button>
                           <button
                             onClick={() => setManagingAssignmentsFor(v as Volunteer & { assignments?: Assignment[] })}
                             className="bg-amber-100 text-amber-700 px-3 py-1 rounded text-xs font-medium hover:bg-amber-200"
@@ -3356,32 +3483,68 @@ export default function AdminDashboard() {
                       <div key={category.id}>
                         <p className="text-xs font-semibold text-amber-800 mb-1">{category.name}</p>
                         <div className="space-y-1">
-                          {catShifts.map((s) => (
-                            <div key={s.id} className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded px-3 py-2 text-sm">
-                              <div>
+                          {catShifts.map((s) => {
+                            // Surface both blockers up front rather than letting
+                            // the click fail silently against a 400.
+                            const ageBlocked = category.requiresOver21 === true
+                              && managingAssignmentsFor.isOver21 !== true;
+                            const clashes = overlappingShifts(managingAssignmentsFor.id, s.id);
+                            return (
+                            <div key={s.id} className="flex items-center justify-between gap-2 bg-gray-50 border border-gray-200 rounded px-3 py-2 text-sm">
+                              <div className="min-w-0">
                                 <span className="font-medium">{s.title}</span>
                                 <span className="text-gray-500 text-xs ml-2">{fmt12(s.startTime)} - {fmt12(s.endTime)}</span>
                                 <span className="text-gray-400 text-xs ml-2">({s.assignments.length}/{s.capacity})</span>
+                                {ageBlocked && (
+                                  <span className="block text-xs text-amber-700">
+                                    🍺 21+ only — {managingAssignmentsFor.name} is {managingAssignmentsFor.isOver21 === false ? "under 21" : "not age-confirmed"}
+                                  </span>
+                                )}
+                                {!ageBlocked && clashes.length > 0 && (
+                                  <span className="block text-xs text-orange-600">
+                                    ⚠ overlaps {clashes.map((c) => c.title).join(", ")}
+                                  </span>
+                                )}
                               </div>
                               <button
+                                disabled={ageBlocked}
                                 onClick={async () => {
-                                  await fetch("/api/assignments", {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ volunteerId: managingAssignmentsFor.id, shiftId: s.id, assignedBy: "admin" }),
-                                  });
-                                  await loadData();
-                                  const res = await fetch("/api/volunteers");
-                                  const vols = await res.json();
-                                  const updated = vols.find((vol: Volunteer) => vol.id === managingAssignmentsFor.id);
-                                  if (updated) setManagingAssignmentsFor(updated);
+                                  clearMessages();
+                                  const go = async () => {
+                                    const r = await fetch("/api/assignments", {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ volunteerId: managingAssignmentsFor.id, shiftId: s.id, assignedBy: "admin" }),
+                                    });
+                                    if (!r.ok) {
+                                      const d = await r.json().catch(() => ({}));
+                                      setError(d.error || `Could not assign ${managingAssignmentsFor.name} to ${s.title}.`);
+                                      return;
+                                    }
+                                    await loadData();
+                                    const res = await fetch("/api/volunteers");
+                                    const vols = await res.json();
+                                    const updated = vols.find((vol: Volunteer) => vol.id === managingAssignmentsFor.id);
+                                    if (updated) setManagingAssignmentsFor(updated);
+                                    setSuccess(`${managingAssignmentsFor.name} assigned to ${s.title}.`);
+                                  };
+                                  if (clashes.length > 0) {
+                                    showConfirm(
+                                      `${managingAssignmentsFor.name} is already on ${clashes.map((c) => `${c.title} (${fmt12(c.startTime)}–${fmt12(c.endTime)})`).join(", ")}, which overlaps ${s.title}. Assign anyway?`,
+                                      go,
+                                      "Yes, Assign Anyway"
+                                    );
+                                  } else {
+                                    await go();
+                                  }
                                 }}
-                                className="text-green-600 hover:text-green-800 text-xs font-medium px-2 py-0.5 bg-green-50 border border-green-200 rounded hover:bg-green-100"
+                                className="shrink-0 text-green-600 hover:text-green-800 text-xs font-medium px-2 py-0.5 bg-green-50 border border-green-200 rounded hover:bg-green-100 disabled:opacity-40 disabled:cursor-not-allowed"
                               >
                                 Assign
                               </button>
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     ))}
@@ -3865,6 +4028,91 @@ export default function AdminDashboard() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Welcome Message</label>
               <textarea value={settings.welcomeMessage} onChange={(e) => setSettings({ ...settings, welcomeMessage: e.target.value })} className={inputClass} rows={3} placeholder="Thank you for volunteering at our festival!" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========= EDIT VOLUNTEER MODAL ========= */}
+      {editVol && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl">✏️</span>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Edit Volunteer</h3>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  Shifts, partner links and team membership are unaffected.
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+              <input
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+              <input
+                type="tel"
+                value={editPhone}
+                onChange={(e) => setEditPhone(fmtPhoneInput(e.target.value))}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                placeholder="555-123-4567"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                This is how the volunteer logs in and where reminders go.
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Email <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <input
+                type="email"
+                value={editEmail}
+                onChange={(e) => setEditEmail(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+              <p className="text-xs font-semibold text-amber-900 mb-2">🍺 21 or older?</p>
+              <div className="flex flex-wrap gap-2">
+                {([
+                  { v: true, label: "Yes, 21+" },
+                  { v: false, label: "Under 21" },
+                  { v: null, label: "Not confirmed" },
+                ] as const).map(({ v, label }) => (
+                  <button
+                    key={String(v)}
+                    onClick={() => setEditOver21(v)}
+                    className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                      editOver21 === v
+                        ? "border-amber-500 bg-white text-amber-900"
+                        : "border-gray-200 bg-white text-gray-600 hover:border-amber-300"
+                    }`}
+                  >{label}</button>
+                ))}
+              </div>
+              <p className="text-xs text-amber-700 mt-2">
+                Only &quot;Yes, 21+&quot; allows assignment to alcohol-service shifts.
+              </p>
+            </div>
+
+            <div className="flex gap-3 justify-end pt-1">
+              <button
+                onClick={() => setEditVol(null)}
+                className="px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 font-medium"
+              >Cancel</button>
+              <button
+                onClick={handleSaveVol}
+                className="px-4 py-2 rounded-lg bg-teal-700 text-white text-sm font-semibold hover:bg-teal-800"
+              >Save Changes</button>
             </div>
           </div>
         </div>

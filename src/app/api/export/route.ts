@@ -3,6 +3,18 @@ import { prisma } from "@/lib/db";
 import { toCSV, fmt12, formatPhone } from "@/lib/csv";
 import { requireAdmin } from "@/lib/auth";
 
+
+/**
+ * Age eligibility as it should read on a printed sheet. The station captain
+ * holding paper on festival day needs to verify this for alcohol-service
+ * shifts, and it was previously absent from every export.
+ */
+function ageLabel(isOver21: boolean | null | undefined): string {
+  if (isOver21 === true) return "21+";
+  if (isOver21 === false) return "Under 21";
+  return "Not confirmed";
+}
+
 // GET /api/export?type=master|shift|volunteer|coverage&format=csv|html
 //   shift requires shiftId, volunteer requires volunteerId
 export async function GET(req: NextRequest) {
@@ -59,6 +71,7 @@ async function masterExport(format: string) {
     Email: a.volunteer.email || "",
     Phone: formatPhone(a.volunteer.phone),
     Role: a.volunteer.role === "team_lead" ? "Team Lead" : "Volunteer",
+    "21+": ageLabel(a.volunteer.isOver21),
   }));
 
   if (format === "html") return printableHtml("Master Volunteer Schedule", rows);
@@ -89,6 +102,7 @@ async function shiftExport(shiftId: string, format: string) {
     Email: a.volunteer.email || "",
     Phone: formatPhone(a.volunteer.phone),
     Role: a.volunteer.role === "team_lead" ? "Team Lead" : "Volunteer",
+    "21+": ageLabel(a.volunteer.isOver21),
     "Checked In": "",
   }));
 
@@ -131,7 +145,7 @@ async function volunteerExport(volunteerId: string, format: string) {
   });
 
   const title = `Schedule for ${v.name}`;
-  if (format === "html") return printableHtml(title, rows, [`Email: ${v.email || "—"}`, `Phone: ${formatPhone(v.phone) || "—"}`]);
+  if (format === "html") return printableHtml(title, rows, [`Email: ${v.email || "—"}`, `Phone: ${formatPhone(v.phone) || "—"}`, `Age: ${ageLabel(v.isOver21)}`]);
   return csvResponse(`schedule-${v.name.replace(/\s+/g, "_")}.csv`, rows);
 }
 
@@ -182,6 +196,7 @@ async function volunteersExport(format: string) {
       Email: v.email || "",
       Phone: formatPhone(v.phone),
       Role: v.role === "team_lead" ? "Team Lead" : "Volunteer",
+      "21+": ageLabel(v.isOver21),
     };
 
     for (let i = 0; i < maxShifts; i++) {

@@ -172,7 +172,17 @@ export async function PUT(req: NextRequest) {
   if (role !== undefined) updateData.role = role;
   if (name !== undefined) updateData.name = name;
   if (email !== undefined) updateData.email = email;
-  if (phone !== undefined) updateData.phone = phone ? normalizePhone(phone as string) : phone;
+  if (phone !== undefined) {
+    // Same rule as registration — the phone is the login credential and the SMS
+    // destination, so an admin edit must not be able to introduce a bad one.
+    if (phone && phoneDigits(phone as string).length !== 10) {
+      return NextResponse.json(
+        { error: "Please enter a valid 10-digit phone number, or clear the field." },
+        { status: 400 }
+      );
+    }
+    updateData.phone = phone ? normalizePhone(phone as string) : phone;
+  }
   if (isOver21 !== undefined) updateData.isOver21 = isOver21 === true ? true : isOver21 === false ? false : null;
   // Approve pending role: promote to role and clear pendingRole
   if (approvePendingRole) { updateData.role = approvePendingRole; updateData.pendingRole = null; }
