@@ -4,6 +4,9 @@ import { requireAdmin } from "@/lib/auth";
 import { normalizePhone, phoneDigits } from "@/lib/formatters";
 
 export async function GET(req: NextRequest) {
+  // Admin-only: this returns whole Volunteer records including phone and email.
+  // The volunteer portal never calls it — it uses /lookup and /[id] instead.
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   const search = req.nextUrl.searchParams.get("search");
   const where = search
     ? { name: { contains: search } }

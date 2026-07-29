@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { fmt12, fmtPhoneInput } from "@/lib/formatters";
+import { fmt12, fmtPhoneInput, fmtShiftDate } from "@/lib/formatters";
 
 interface Shift {
   id: string;
@@ -683,7 +683,7 @@ export default function VolunteerPortal() {
       .map((a) => a.shift?.date)
       .find(Boolean);
     const dateLine = festivalDate
-      ? new Date(festivalDate).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+      ? fmtShiftDate(festivalDate, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
       : "";
     const html = `<!DOCTYPE html><html><head><title>${esc(team.name)} — Team Schedule</title>
 <style>
@@ -724,7 +724,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
         rows.push([team.name, tm.volunteer.name, phone, "", "(no shift assigned)", "", ""].map(esc).join(","));
       } else {
         for (const a of memberShifts) {
-          const d = a.shift.date ? new Date(a.shift.date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : "";
+          const d = a.shift.date ? fmtShiftDate(a.shift.date, { weekday: "short", month: "short", day: "numeric" }) : "";
           rows.push([team.name, tm.volunteer.name, phone, d, a.shift.title, fmt12(a.shift.startTime), fmt12(a.shift.endTime)].map(esc).join(","));
         }
       }
@@ -1705,9 +1705,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                                 in My Schedule after you've already committed. */}
                             {shift.date && (
                               <p className="text-xs font-medium text-amber-700">
-                                {new Date(shift.date).toLocaleDateString("en-US", {
-                                  weekday: "long", month: "long", day: "numeric",
-                                })}
+                                {fmtShiftDate(shift.date)}
                               </p>
                             )}
                             {shift.description && <p className="text-xs text-gray-500 mt-0.5">{shift.description}</p>}
@@ -1900,11 +1898,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                 </div>
                 <div className="text-sm text-gray-600 space-y-1 mt-1">
                   <p>
-                    {new Date(assignment.shift.date).toLocaleDateString("en-US", {
-                      weekday: "long",
-                      month: "long",
-                      day: "numeric",
-                    })}
+                    {fmtShiftDate(assignment.shift.date)}
                   </p>
                   <p>{fmt12(assignment.shift.startTime)} - {fmt12(assignment.shift.endTime)}</p>
                 </div>
@@ -1928,11 +1922,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                 </div>
                 <div className="text-sm text-gray-600 space-y-1 mt-1">
                   <p>
-                    {new Date(assignment.shift.date).toLocaleDateString("en-US", {
-                      weekday: "long",
-                      month: "long",
-                      day: "numeric",
-                    })}
+                    {fmtShiftDate(assignment.shift.date)}
                   </p>
                   <p>{fmt12(assignment.shift.startTime)} - {fmt12(assignment.shift.endTime)}</p>
                 </div>

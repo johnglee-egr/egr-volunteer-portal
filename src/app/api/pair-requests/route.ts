@@ -4,6 +4,9 @@ import { requireAdmin, isAdmin } from "@/lib/auth";
 import { phoneDigits, normalizePhone } from "@/lib/formatters";
 
 export async function GET() {
+  // Admin-only: includes full requester/partner records with contact details.
+  // Volunteers see their own pair requests via /api/volunteers/lookup.
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   const requests = await prisma.pairRequest.findMany({
     include: { requester: true, partner: true },
     orderBy: { createdAt: "desc" },

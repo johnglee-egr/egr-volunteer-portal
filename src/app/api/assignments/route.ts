@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
+  // Admin-only: includes the full volunteer record on every assignment.
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   const status = req.nextUrl.searchParams.get("status");
 
   const where = status ? { status } : {};

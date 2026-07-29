@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, FormEvent } from "react";
 import TimeInput from "@/components/TimeInput";
 import NotificationsPanel from "./NotificationsPanel";
-import { fmt12, fmtPhoneInput, formatPhone } from "@/lib/formatters";
+import { fmt12, fmtPhoneInput, formatPhone, fmtShiftDate } from "@/lib/formatters";
 
 interface Volunteer {
   id: string;
@@ -2162,10 +2162,15 @@ export default function AdminDashboard() {
                   });
                   if (res.ok) {
                     const data = await res.json();
-                    const parts = [`${data.added} assigned`];
-                    if (data.already) parts.push(`${data.already} already on shift`);
-                    if (data.errors) parts.push(`${data.errors} errored`);
+                    const shiftName = shifts.find((s: Shift) => s.id === bulkAssignShiftId)?.title || "shift";
+                    const parts = [`${data.added} assigned to ${shiftName}`];
+                    if (data.already) parts.push(`${data.already} already on it`);
                     setSuccess(parts.join(", "));
+                    // Say WHO was rejected and why — a smaller number than
+                    // expected is otherwise indistinguishable from success.
+                    if (data.rejectedReasons?.length) {
+                      setError(data.rejectedReasons.join(" "));
+                    }
                     setSelectedVolIds(new Set());
                     setBulkAssignShiftId("");
                     loadData();
@@ -2847,7 +2852,7 @@ export default function AdminDashboard() {
                 <div className="text-xs text-gray-500 mt-1 flex flex-wrap gap-2">
                   <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded">{pa.shift.category?.name}</span>
                   <span>{fmt12(pa.shift.startTime)} – {fmt12(pa.shift.endTime)}</span>
-                  <span>{new Date(pa.shift.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                  <span>{fmtShiftDate(pa.shift.date, { month: "short", day: "numeric" })}</span>
                 </div>
               </>
             ),

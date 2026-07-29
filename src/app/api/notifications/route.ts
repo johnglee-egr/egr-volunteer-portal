@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { sendReminder, sendEmail, sendSMS, sendToGroup } from "@/lib/notifications";
+import { requireAdmin } from "@/lib/auth";
 
 export async function GET() {
+  // Admin-only: notification records contain recipient phone numbers and
+  // email addresses along with the full message bodies that were sent.
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   const notifications = await prisma.notification.findMany({
     orderBy: { createdAt: "desc" },
     take: 100,

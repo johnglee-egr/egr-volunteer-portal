@@ -38,3 +38,21 @@ export function phoneDigits(phone: string): string {
   const d = phone.replace(/\D/g, "");
   return d.startsWith("1") && d.length === 11 ? d.slice(1) : d;
 }
+
+/**
+ * Format a shift/festival date for display.
+ *
+ * Dates are stored as UTC midnight (e.g. 2026-10-10T00:00:00.000Z) because they
+ * represent a calendar day, not an instant. Rendering that with the browser's
+ * local timezone shifts it backwards in every timezone west of UTC — a Saturday
+ * Oct 10 festival displayed as "Friday, October 9" to US volunteers. Forcing
+ * UTC keeps the calendar day intact everywhere.
+ */
+export function fmtShiftDate(
+  date: string | Date,
+  opts: Intl.DateTimeFormatOptions = { weekday: "long", month: "long", day: "numeric" }
+): string {
+  const d = typeof date === "string" ? new Date(date) : date;
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", { ...opts, timeZone: "UTC" });
+}
