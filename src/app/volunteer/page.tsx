@@ -24,7 +24,11 @@ interface Assignment {
 
 interface TeamMember {
   id: string;
-  volunteer: { id: string; name: string; email?: string; phone?: string; assignments?: Assignment[]; role?: string };
+  volunteer: {
+    id: string; name: string; email?: string; phone?: string;
+    assignments?: Assignment[]; role?: string;
+    smsConsent?: boolean | null; smsOptOutAt?: string | null;
+  };
 }
 
 interface Team {
@@ -53,6 +57,8 @@ interface Volunteer {
   phone?: string;
   role?: string;
   pendingRole?: string | null;
+  smsConsent?: boolean | null;
+  smsOptOutAt?: string | null;
   assignments: Assignment[];
   pairRequests: { id: string; status: string; partner: { name: string } }[];
 }
@@ -100,7 +106,7 @@ export default function VolunteerPortal() {
   const [myTeams, setMyTeams] = useState<Team[]>([]);
   const [showTeamForm, setShowTeamForm] = useState(false);
   const [newTeamName, setNewTeamName] = useState("");
-  const [newTeamMembers, setNewTeamMembers] = useState<{ name: string; isOver21: boolean | null }[]>([{ name: "", isOver21: null }]);
+  const [newTeamMembers, setNewTeamMembers] = useState<{ name: string; phone: string; isOver21: boolean | null }[]>([{ name: "", phone: "", isOver21: null }]);
   const [teamSignUpShiftId, setTeamSignUpShiftId] = useState<string | null>(null);
   const [teamSignUpTeamId, setTeamSignUpTeamId] = useState<string | null>(null);
 
@@ -126,6 +132,10 @@ export default function VolunteerPortal() {
   // Inline confirm for removing a member from the team (matches the "Remove Me"
   // pattern used on shifts — the app uses no native browser dialogs anywhere else)
   const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
+
+  // Inline "add member" fields on the roster
+  const [addMemberName, setAddMemberName] = useState("");
+  const [addMemberPhone, setAddMemberPhone] = useState("");
 
   useEffect(() => {
     fetch("/api/shifts").then((r) => r.json()).then(setShifts);
@@ -344,7 +354,7 @@ export default function VolunteerPortal() {
     setError("");
     const validMembers = newTeamMembers
       .filter((m) => m.name.trim())
-      .map((m) => ({ name: m.name.trim(), isOver21: m.isOver21 }));
+      .map((m) => ({ name: m.name.trim(), phone: m.phone.trim() || null, isOver21: m.isOver21 }));
     const res = await fetch("/api/teams", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -352,7 +362,7 @@ export default function VolunteerPortal() {
     });
     if (res.ok) {
       setNewTeamName("");
-      setNewTeamMembers([{ name: "", isOver21: null }]);
+      setNewTeamMembers([{ name: "", phone: "", isOver21: null }]);
       if (step === "team-setup") {
         // Coming from registration — load teams then ask about shift selection
         refreshData();
@@ -405,6 +415,55 @@ export default function VolunteerPortal() {
     setMemberSignUpModal(null);
     setSuccess(`Signed up ${count} member${count !== 1 ? "s" : ""} for ${shift.title}!`);
     refreshData();
+  };
+
+  // A volunteer opts themselves in to SMS from their own dashboard. This is the
+  // only path that can ever set smsConsent — a captain cannot do it for them.
+  const handleSelfOptIn = async () => {
+    if (!volunteer) return;
+    setError("");
+    const res = await fetch("/api/volunteers/consent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        volunteerId: volunteer.id,
+        smsConsent: true,
+        smsConsentText: SMS_CONSENT_TEXT,
+      }),
+    });
+    if (res.ok) {
+      setSuccess("You're signed up for text reminders. Reply STOP to any message to cancel.");
+      refreshData();
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setError(d.error || "Could not save your preference.");
+    }
+  };
+
+  // Add one member to the team from the roster. The phone is stored for contact
+  // only — it does NOT enroll them in SMS, which they must consent to themselves.
+  const handleAddMember = async (teamId: string) => {
+    const name = addMemberName.trim();
+    if (!name) return;
+    setError("");
+    const res = await fetch("/api/teams", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: teamId,
+        addMembers: [{ name, phone: addMemberPhone.trim() || null }],
+        requesterId: volunteer?.id,
+      }),
+    });
+    if (res.ok) {
+      setAddMemberName("");
+      setAddMemberPhone("");
+      setSuccess(`${name} added to the team.`);
+      refreshData();
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setError(d.error || "Could not add that member.");
+    }
   };
 
   // Release a shift slot held by a team member (captain-initiated)
@@ -928,8 +987,19 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                       u[i] = { ...u[i], name: e.target.value };
                       setNewTeamMembers(u);
                     }}
-                    className="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-400 outline-none"
+                    className="flex-1 min-w-[130px] border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-400 outline-none"
                     placeholder={`Member ${i + 1} name`}
+                  />
+                  <input
+                    type="tel"
+                    value={m.phone}
+                    onChange={(e) => {
+                      const u = [...newTeamMembers];
+                      u[i] = { ...u[i], phone: fmtPhoneInput(e.target.value) };
+                      setNewTeamMembers(u);
+                    }}
+                    className="flex-1 min-w-[130px] border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-400 outline-none"
+                    placeholder="Phone (optional)"
                   />
                   <label className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer whitespace-nowrap">
                     <input
@@ -956,11 +1026,19 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                 </div>
               ))}
               <p className="text-xs text-gray-400 mb-1">Check &quot;21+&quot; for members who are 21 or older (required for pouring roles).</p>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-2">
+                <p className="text-xs text-blue-900">
+                  📱 <strong>About phone numbers:</strong> adding a teammate&apos;s number lets us reach
+                  them about their shifts. It does <strong>not</strong> sign them up for text
+                  reminders — by law each person has to agree to texts themselves. They&apos;ll be
+                  asked once when they open the portal, and you&apos;ll see who still needs to.
+                </p>
+              </div>
             </div>
 
             {/* Actions */}
             <button
-              onClick={() => setNewTeamMembers([...newTeamMembers, { name: "", isOver21: null }])}
+              onClick={() => setNewTeamMembers([...newTeamMembers, { name: "", phone: "", isOver21: null }])}
               className="w-full bg-amber-600 text-white py-2.5 rounded-lg font-semibold hover:bg-amber-700 transition-colors"
             >
               + Add Another Member
@@ -975,7 +1053,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
             <button
               onClick={() => {
                 setNewTeamName("");
-                setNewTeamMembers([{ name: "", isOver21: null }]);
+                setNewTeamMembers([{ name: "", phone: "", isOver21: null }]);
                 setStep("dashboard");
               }}
               className="w-full text-gray-500 text-sm hover:text-gray-700 transition-colors"
@@ -1128,6 +1206,34 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
           >
             {registerPartner ? "Register Partner & Submit Request" : "Submit Request"}
           </button>
+        </div>
+      )}
+
+      {/* SMS opt-in prompt — shown to anyone with a phone who hasn't consented.
+          This is how teammates added by a captain enroll themselves. */}
+      {volunteer?.phone && !volunteer?.smsConsent && !volunteer?.smsOptOutAt && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1">
+              <p className="font-semibold text-blue-900 text-sm mb-1">📱 Want text reminders about your shifts?</p>
+              <p className="text-xs text-blue-800 leading-snug">
+                Get a text before each shift you&apos;re assigned. By turning this on you agree to
+                receive recurring automated SMS from the EGR Harvest + Beer Festival at{" "}
+                <strong>{volunteer.phone}</strong>. Message frequency varies (about 5&ndash;10 per
+                festival season). Message and data rates may apply. Reply STOP to cancel, HELP for
+                help. See our{" "}
+                <a href={SMS_TERMS_URL} target="_blank" rel="noopener noreferrer" className="underline font-medium">Terms</a>
+                {" "}and{" "}
+                <a href={SMS_PRIVACY_URL} target="_blank" rel="noopener noreferrer" className="underline font-medium">Privacy Policy</a>.
+              </p>
+            </div>
+            <button
+              onClick={handleSelfOptIn}
+              className="bg-blue-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-blue-800 transition-colors whitespace-nowrap shrink-0"
+            >
+              Yes, text me
+            </button>
+          </div>
         </div>
       )}
 
@@ -1683,8 +1789,15 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                     <input
                       value={m.name}
                       onChange={(e) => { const u = [...newTeamMembers]; u[i] = { ...u[i], name: e.target.value }; setNewTeamMembers(u); }}
-                      className="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-400 outline-none"
+                      className="flex-1 min-w-[130px] border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-400 outline-none"
                       placeholder={`Member ${i + 1} name`}
+                    />
+                    <input
+                      type="tel"
+                      value={m.phone}
+                      onChange={(e) => { const u = [...newTeamMembers]; u[i] = { ...u[i], phone: fmtPhoneInput(e.target.value) }; setNewTeamMembers(u); }}
+                      className="flex-1 min-w-[130px] border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-400 outline-none"
+                      placeholder="Phone (optional)"
                     />
                     <label className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer whitespace-nowrap">
                       <input
@@ -1705,7 +1818,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                   </div>
                 ))}
                 <p className="text-xs text-gray-400 mb-1">Check &quot;21+&quot; for members who are 21 or older (required for pouring roles).</p>
-                <button onClick={() => setNewTeamMembers([...newTeamMembers, { name: "", isOver21: null }])} className="text-teal-700 text-sm font-medium hover:text-teal-900">+ Add Another Member</button>
+                <button onClick={() => setNewTeamMembers([...newTeamMembers, { name: "", phone: "", isOver21: null }])} className="text-teal-700 text-sm font-medium hover:text-teal-900">+ Add Another Member</button>
               </div>
               <button onClick={handleCreateTeam} className="bg-teal-700 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-teal-800">Create Team</button>
             </div>
@@ -1796,9 +1909,23 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                           className={`rounded-lg p-3 text-sm transition-colors ${isOver && dragShiftId ? "bg-teal-100 border-2 border-teal-400 border-dashed" : isLeader ? "bg-teal-50 border border-teal-200" : "bg-gray-50 border border-gray-200"}`}
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-1 font-medium">
+                            <div className="flex items-center gap-1 font-medium flex-wrap">
                               {isLeader && <span className="text-teal-600 text-xs font-bold">TL</span>}
                               {tm.volunteer.name}
+                              {tm.volunteer.phone && (
+                                tm.volunteer.smsConsent ? (
+                                  <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-normal" title="This member opted in to text reminders">
+                                    📱 texts on
+                                  </span>
+                                ) : (
+                                  <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-normal" title="They must turn on texts themselves — we can't do it for them">
+                                    texts off
+                                  </span>
+                                )
+                              )}
+                              {!tm.volunteer.phone && (
+                                <span className="text-xs bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded-full font-normal">no phone</span>
+                              )}
                               {isOver && dragShiftId && <span className="text-teal-600 text-xs ml-1">← drop here</span>}
                             </div>
                             {!isLeader && (
@@ -1858,25 +1985,28 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                     })}
                   </div>
 
-                  {/* Add new members inline */}
-                  <div className="mt-3 flex gap-2">
+                  {/* Add new members inline (name + optional phone) */}
+                  <div className="mt-3 flex flex-wrap gap-2 items-center">
                     <input
+                      value={addMemberName}
+                      onChange={(e) => setAddMemberName(e.target.value)}
                       placeholder="Add member by name..."
-                      className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-teal-400 outline-none"
-                      onKeyDown={async (e) => {
-                        if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
-                          const memberName = (e.target as HTMLInputElement).value.trim();
-                          await fetch("/api/teams", {
-                            method: "PUT",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ id: team.id, addMembers: [{ name: memberName }], requesterId: volunteer?.id }),
-                          });
-                          (e.target as HTMLInputElement).value = "";
-                          refreshData();
-                        }
-                      }}
+                      className="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-teal-400 outline-none"
+                      onKeyDown={(e) => { if (e.key === "Enter") handleAddMember(team.id); }}
                     />
-                    <span className="text-xs text-gray-400 self-center whitespace-nowrap">Press Enter to add</span>
+                    <input
+                      type="tel"
+                      value={addMemberPhone}
+                      onChange={(e) => setAddMemberPhone(fmtPhoneInput(e.target.value))}
+                      placeholder="Phone (optional)"
+                      className="flex-1 min-w-[130px] border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-teal-400 outline-none"
+                      onKeyDown={(e) => { if (e.key === "Enter") handleAddMember(team.id); }}
+                    />
+                    <button
+                      onClick={() => handleAddMember(team.id)}
+                      disabled={!addMemberName.trim()}
+                      className="bg-teal-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-teal-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >Add</button>
                   </div>
                 </>
               )}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdmin, isAdmin } from "@/lib/auth";
+import { normalizePhone, phoneDigits } from "@/lib/formatters";
 
 const teamInclude = {
   leader: true,
@@ -12,6 +13,63 @@ const teamInclude = {
     },
   },
 };
+
+type MemberInput = { name: string; phone?: string | null; email?: string | null; isOver21?: boolean | null };
+
+/**
+ * Find or create the volunteer record for a teammate a captain is adding.
+ *
+ * Matching order is phone-first (digits-only, so formatting never matters) then
+ * case-insensitive name, which keeps a captain from creating a duplicate record
+ * for someone who already registered themselves.
+ *
+ * Deliberately never sets smsConsent: A2P 10DLC requires the subscriber's own
+ * consent, so a captain supplying a number does not opt that person into texts.
+ * The number is stored for contact/identification only.
+ */
+async function upsertMemberVolunteer(m: MemberInput) {
+  const name = m.name.trim();
+  const rawPhone = m.phone ? String(m.phone).trim() : "";
+
+  let vol = null;
+  if (rawPhone) {
+    const digits = phoneDigits(rawPhone);
+    if (digits.length >= 10) {
+      const withPhone = await prisma.volunteer.findMany({ where: { phone: { not: null } } });
+      vol = withPhone.find((v) => v.phone && phoneDigits(v.phone) === digits) ?? null;
+    }
+  }
+  if (!vol) {
+    vol = await prisma.volunteer.findFirst({
+      where: { name: { equals: name, mode: "insensitive" } },
+    });
+  }
+
+  const isOver21 = m.isOver21 === true ? true : m.isOver21 === false ? false : null;
+
+  if (!vol) {
+    return prisma.volunteer.create({
+      data: {
+        name,
+        email: m.email || null,
+        phone: rawPhone ? normalizePhone(rawPhone) : null,
+        isOver21,
+        // contactPref stays email-only until the person opts in to SMS themselves
+        contactPref: "email",
+      },
+    });
+  }
+
+  // Backfill a phone or 21+ answer we didn't previously have, but never
+  // overwrite details the volunteer supplied about themselves.
+  const patch: { phone?: string; isOver21?: boolean } = {};
+  if (rawPhone && !vol.phone) patch.phone = normalizePhone(rawPhone);
+  if (isOver21 !== null && vol.isOver21 === null) patch.isOver21 = isOver21;
+  if (Object.keys(patch).length > 0) {
+    return prisma.volunteer.update({ where: { id: vol.id }, data: patch });
+  }
+  return vol;
+}
 
 export async function GET() {
   try {
@@ -52,24 +110,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Create volunteer records for members (name only)
+    // Create volunteer records for members. A captain may supply a teammate's
+    // phone for contact purposes — it never sets smsConsent, which only the
+    // person themselves can give (A2P 10DLC forbids third-party opt-in).
     const memberVolunteerIds: string[] = [];
     if (memberNames && Array.isArray(memberNames)) {
       for (const m of memberNames) {
         if (!m.name || !m.name.trim()) continue;
-        // Check if volunteer already exists by name
-        let vol = await prisma.volunteer.findFirst({ where: { name: m.name.trim() } });
-        if (!vol) {
-          const memberIsOver21 = m.isOver21 === true ? true : m.isOver21 === false ? false : null;
-          vol = await prisma.volunteer.create({
-            data: {
-              name: m.name.trim(),
-              email: m.email || null,
-              phone: m.phone || null,
-              isOver21: memberIsOver21,
-            },
-          });
-        }
+        const vol = await upsertMemberVolunteer(m);
         memberVolunteerIds.push(vol.id);
       }
     }
@@ -121,18 +169,8 @@ export async function PUT(req: NextRequest) {
     // Add members by name (create volunteer if needed)
     if (addMembers && Array.isArray(addMembers)) {
       for (const m of addMembers) {
-        let vol = await prisma.volunteer.findFirst({ where: { name: m.name?.trim() } });
-        if (!vol) {
-          const addIsOver21 = m.isOver21 === true ? true : m.isOver21 === false ? false : null;
-          vol = await prisma.volunteer.create({
-            data: {
-              name: m.name.trim(),
-              email: m.email || null,
-              phone: m.phone || null,
-              isOver21: addIsOver21,
-            },
-          });
-        }
+        if (!m.name || !m.name.trim()) continue;
+        const vol = await upsertMemberVolunteer(m);
         // Add to team (ignore if already member)
         await prisma.teamMember.upsert({
           where: { teamId_volunteerId: { teamId: id, volunteerId: vol.id } },
