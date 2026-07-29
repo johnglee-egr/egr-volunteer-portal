@@ -191,6 +191,10 @@ export default function VolunteerPortal() {
       setError("A phone number is required so we can send you shift reminders.");
       return;
     }
+    if (phone.replace(/\D/g, "").length !== 10) {
+      setError("Please enter a valid 10-digit phone number, e.g. 555-123-4567.");
+      return;
+    }
     if (isOver21 === null) {
       setError("Please tell us whether you are 21 or older — it determines which roles you can sign up for.");
       return;

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
-import { normalizePhone } from "@/lib/formatters";
+import { normalizePhone, phoneDigits } from "@/lib/formatters";
 
 export async function GET(req: NextRequest) {
   const search = req.nextUrl.searchParams.get("search");
@@ -36,6 +36,15 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
+  // The phone number is both the login credential and the SMS destination, so a
+  // malformed one locks the volunteer out AND makes them unreachable — and they
+  // cannot correct it from the portal.
+  if (phoneDigits(phone).length !== 10) {
+    return NextResponse.json(
+      { error: "Please enter a valid 10-digit phone number, e.g. 555-123-4567." },
+      { status: 400 }
+    );
+  }
   // Age verification is required at self-registration — alcohol-service
   // categories are gated on it, so an unanswered value silently blocks people.
   if (isOver21 !== true && isOver21 !== false) {
@@ -64,6 +73,22 @@ export async function POST(req: NextRequest) {
     // Return only id + name — not the full record — to avoid PII leakage
     // The client should then use /api/volunteers/lookup to authenticate properly
     return NextResponse.json({ id: existing.id, name: existing.name, alreadyRegistered: true });
+  }
+
+  // The phone number doubles as the login credential, so the same number under
+  // two names makes account resolution ambiguous. Block it rather than silently
+  // creating a second account on one credential.
+  const digits = phoneDigits(phone);
+  const allWithPhone = await prisma.volunteer.findMany({ where: { phone: { not: null } } });
+  const phoneTaken = allWithPhone.find((v) => v.phone && phoneDigits(v.phone) === digits);
+  if (phoneTaken) {
+    return NextResponse.json(
+      {
+        error: `That phone number is already registered to ${phoneTaken.name}. If that's you, use "Already Registered? Look Up My Schedule" instead.`,
+        phoneTaken: true,
+      },
+      { status: 409 }
+    );
   }
 
   // If requesting team lead role, save as pendingRole (requires admin approval)
