@@ -146,7 +146,7 @@ export async function POST(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   try {
     const body = await req.json();
-    const { id, name, addMembers, removeMembers, assignShiftId, assignCategoryId, spreadAcrossShifts } = body;
+    const { id, name, addMembers, addMemberIds, removeMembers, assignShiftId, assignCategoryId, spreadAcrossShifts } = body;
 
     // Allow team leaders to manage their own team members without admin auth.
     // All other operations (rename, shift assignment, spread) require admin.
@@ -164,6 +164,22 @@ export async function PUT(req: NextRequest) {
     // Rename team
     if (name) {
       await prisma.team.update({ where: { id }, data: { name } });
+    }
+
+    // Add existing volunteers by id (admin "Add to Team" bulk action). Unlike
+    // addMembers this never creates a volunteer — the records already exist, so
+    // matching by name/phone would risk attaching the wrong person.
+    if (addMemberIds && Array.isArray(addMemberIds)) {
+      for (const volunteerId of addMemberIds) {
+        if (typeof volunteerId !== "string" || !volunteerId) continue;
+        const exists = await prisma.volunteer.findUnique({ where: { id: volunteerId } });
+        if (!exists) continue;
+        await prisma.teamMember.upsert({
+          where: { teamId_volunteerId: { teamId: id, volunteerId } },
+          create: { teamId: id, volunteerId },
+          update: {},
+        });
+      }
     }
 
     // Add members by name (create volunteer if needed)

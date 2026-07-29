@@ -172,6 +172,9 @@ export default function AdminDashboard() {
   // Partner-together modal state
   const [partnerModal, setPartnerModal] = useState<PartnerModal | null>(null);
   const [partnerSelectedShiftIds, setPartnerSelectedShiftIds] = useState<Set<string>>(new Set());
+  // "Add to Team" bulk action
+  const [addToTeamModal, setAddToTeamModal] = useState(false);
+  const [addToTeamId, setAddToTeamId] = useState<string>("");
   // Team member expand/collapse (Volunteers tab)
   const [expandedTeamIds, setExpandedTeamIds] = useState<Set<string>>(new Set());
   // Volunteer search (Volunteers tab)
@@ -1178,6 +1181,32 @@ export default function AdminDashboard() {
     setSelectedVolIds(new Set());
     await loadData();
     setSuccess(`${volAName} and ${volBName} are now partners!`);
+  };
+
+  // Add the selected volunteers to an existing team
+  const handleAddToTeam = async () => {
+    if (!addToTeamId) return;
+    clearMessages();
+    const ids = Array.from(selectedVolIds);
+    const team = teams.find((t: Team) => t.id === addToTeamId);
+
+    const res = await fetch("/api/teams", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: addToTeamId, addMemberIds: ids }),
+    });
+
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      setError(d.error || "Could not add to team.");
+      return;
+    }
+
+    setAddToTeamModal(false);
+    setAddToTeamId("");
+    setSelectedVolIds(new Set());
+    await loadData();
+    setSuccess(`Added ${ids.length} volunteer${ids.length !== 1 ? "s" : ""} to ${team?.name ?? "the team"}.`);
   };
 
   // Pair requests
@@ -2192,6 +2221,14 @@ export default function AdminDashboard() {
                   className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-medium hover:bg-green-200"
                 >
                   🤝 Partner Together
+                </button>
+              )}
+              {teams.length > 0 && (
+                <button
+                  onClick={() => { setAddToTeamId(""); setAddToTeamModal(true); }}
+                  className="bg-teal-100 text-teal-800 px-2 py-1 rounded text-xs font-medium hover:bg-teal-200"
+                >
+                  👥 Add to Team
                 </button>
               )}
               <button
@@ -3827,6 +3864,98 @@ export default function AdminDashboard() {
           </div>
         </div>
       )}
+
+      {/* ========= ADD TO TEAM MODAL ========= */}
+      {addToTeamModal && (() => {
+        const selected = Array.from(selectedVolIds)
+          .map((id) => volunteers.find((v: Volunteer) => v.id === id))
+          .filter(Boolean) as Volunteer[];
+        // Partners of selected volunteers who are NOT themselves selected —
+        // worth surfacing so a pair doesn't get split across teams by accident.
+        const missingPartners = selected.flatMap((v) =>
+          getApprovedPartnerIds(v.id)
+            .filter((pid) => !selectedVolIds.has(pid))
+            .map((pid) => volunteers.find((x: Volunteer) => x.id === pid)?.name)
+            .filter(Boolean) as string[]
+        );
+        const currentTeamOf = (vid: string) =>
+          teams.find((t: Team) => t.members.some((m: TeamMemberWithVol) => m.volunteer.id === vid));
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-5">
+              <div className="flex items-start gap-3">
+                <span className="text-2xl">👥</span>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Add to Team</h3>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    {selected.length} volunteer{selected.length !== 1 ? "s" : ""} selected
+                  </p>
+                </div>
+              </div>
+
+              <div className="max-h-40 overflow-y-auto space-y-1.5">
+                {selected.map((v) => {
+                  const existing = currentTeamOf(v.id);
+                  const partnerIds = getApprovedPartnerIds(v.id);
+                  return (
+                    <div key={v.id} className="flex items-center justify-between gap-2 text-sm bg-gray-50 rounded-lg px-3 py-2">
+                      <span className="font-medium text-gray-800">
+                        {partnerIds.length > 0 && <span title="Partnered">🔗 </span>}
+                        {v.name}
+                      </span>
+                      {existing && (
+                        <span className="text-xs text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full shrink-0">
+                          on {existing.name}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {missingPartners.length > 0 && (
+                <p className="text-xs text-purple-800 bg-purple-50 border border-purple-200 rounded-lg px-3 py-2">
+                  🔗 Heads up: {missingPartners.join(", ")} {missingPartners.length === 1 ? "is" : "are"} partnered
+                  with someone you selected but {missingPartners.length === 1 ? "isn't" : "aren't"} selected.
+                  Select {missingPartners.length === 1 ? "them" : "both"} too to keep the pair on the same team.
+                </p>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Choose a team</label>
+                <select
+                  value={addToTeamId}
+                  onChange={(e) => setAddToTeamId(e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                >
+                  <option value="">— Select a team —</option>
+                  {teams.map((t: Team) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} (lead: {t.leader?.name || "—"}, {t.members.length} member{t.members.length !== 1 ? "s" : ""})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-400 mt-1.5">
+                  Anyone already on this team is skipped. Existing shift assignments are untouched.
+                </p>
+              </div>
+
+              <div className="flex gap-3 justify-end pt-1">
+                <button
+                  onClick={() => { setAddToTeamModal(false); setAddToTeamId(""); }}
+                  className="px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 font-medium"
+                >Cancel</button>
+                <button
+                  onClick={handleAddToTeam}
+                  disabled={!addToTeamId}
+                  className="px-4 py-2 rounded-lg bg-teal-700 text-white text-sm font-semibold hover:bg-teal-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                >Add to Team</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ========= PARTNER TOGETHER MODAL ========= */}
       {partnerModal && (
