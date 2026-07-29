@@ -64,7 +64,7 @@ interface Volunteer {
 }
 
 export default function VolunteerPortal() {
-  const [step, setStep] = useState<"choose" | "lookup" | "register" | "team-setup" | "shift-choice" | "signup-complete" | "dashboard">("choose");
+  const [step, setStep] = useState<"choose" | "lookup" | "register" | "team-setup" | "join-team" | "shift-choice" | "signup-complete" | "dashboard">("choose");
   const [volunteer, setVolunteer] = useState<Volunteer | null>(null);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [error, setError] = useState("");
@@ -104,6 +104,15 @@ export default function VolunteerPortal() {
 
   // Team management (for team leads)
   const [myTeams, setMyTeams] = useState<Team[]>([]);
+  // Teams this volunteer belongs to but does not lead
+  const [memberTeams, setMemberTeams] = useState<Team[]>([]);
+  // "Join a Team" flow (offered to individuals right after registering)
+  const [allTeams, setAllTeams] = useState<Team[]>([]);
+  const [joinTeamId, setJoinTeamId] = useState<string>("");
+  const [joinLoading, setJoinLoading] = useState(false);
+  // Reminder shown to a captain right after they first build their team, since
+  // they cannot opt their members into SMS on their behalf.
+  const [showOptInNotice, setShowOptInNotice] = useState(false);
   const [showTeamForm, setShowTeamForm] = useState(false);
   const [newTeamName, setNewTeamName] = useState("");
   const [newTeamMembers, setNewTeamMembers] = useState<{ name: string; phone: string; isOver21: boolean | null }[]>([{ name: "", phone: "", isOver21: null }]);
@@ -206,7 +215,16 @@ export default function VolunteerPortal() {
       setVolunteer({ ...data, assignments: [], pairRequests: [] });
       setIsNewSignup(true); // show "Done — Confirm" bar when they reach the shifts tab
       // If they requested team lead, give them a chance to build their team right now
-      setStep(registerAsTeamLead ? "team-setup" : "dashboard");
+      // Captains go build their team; everyone else is offered the chance to
+      // join an existing one before landing on the dashboard.
+      if (registerAsTeamLead) {
+        setStep("team-setup");
+      } else {
+        const teamRes = await fetch("/api/teams");
+        const teams: Team[] = teamRes.ok ? await teamRes.json() : [];
+        setAllTeams(teams);
+        setStep(teams.length > 0 ? "join-team" : "dashboard");
+      }
     } else {
       const data = await res.json();
       setError(data.error || "Registration failed.");
@@ -334,18 +352,63 @@ export default function VolunteerPortal() {
       setVolunteer(volData);
     }
     if (shiftRes.ok) setShifts(await shiftRes.json());
-    if (teamRes.ok) {
-      const allTeams: Team[] = await teamRes.json();
-      setMyTeams(allTeams.filter((t) => t.leaderId === volId));
-    }
+    if (teamRes.ok) applyTeams(await teamRes.json(), volId);
+  };
+
+  // Split the full team list into "teams I lead", "teams I belong to", and the
+  // full roster used by the Join a Team picker.
+  const applyTeams = (teams: Team[], volId: string) => {
+    setAllTeams(teams);
+    setMyTeams(teams.filter((t) => t.leaderId === volId));
+    setMemberTeams(
+      teams.filter(
+        (t) => t.leaderId !== volId && t.members.some((m) => m.volunteer.id === volId)
+      )
+    );
   };
 
   // Load teams when logging in
   const loadTeams = async (volId: string) => {
     const res = await fetch("/api/teams");
-    if (res.ok) {
-      const allTeams: Team[] = await res.json();
-      setMyTeams(allTeams.filter((t) => t.leaderId === volId));
+    if (res.ok) applyTeams(await res.json(), volId);
+  };
+
+  /**
+   * Join an existing team. `next` decides where the volunteer lands afterwards:
+   * "shifts" lets them pick their own, "captain" hands assignment to the team
+   * leader (they appear on the captain's roster with no shifts either way).
+   */
+  const handleJoinTeam = async (next: "shifts" | "captain") => {
+    if (!volunteer || !joinTeamId) return;
+    setError("");
+    setJoinLoading(true);
+    const res = await fetch("/api/teams/join", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ volunteerId: volunteer.id, teamId: joinTeamId }),
+    });
+    setJoinLoading(false);
+
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      setError(d.error || "Could not join that team.");
+      return;
+    }
+
+    const data = await res.json();
+    await refreshData();
+
+    if (next === "shifts") {
+      setSuccess(`You joined ${data.teamName}! Now pick the shifts you'd like.`);
+      setActiveTab("shifts");
+      setIsNewSignup(true);
+      setStep("dashboard");
+    } else {
+      setSuccess(
+        `You joined ${data.teamName}. ${data.leaderName || "Your captain"} will assign your shifts — watch for a reminder.`
+      );
+      setActiveTab("my-team");
+      setStep("dashboard");
     }
   };
 
@@ -361,15 +424,18 @@ export default function VolunteerPortal() {
       body: JSON.stringify({ name: newTeamName, leaderId: volunteer.id, memberNames: validMembers }),
     });
     if (res.ok) {
+      const hadPhones = validMembers.some((m) => m.phone);
       setNewTeamName("");
       setNewTeamMembers([{ name: "", phone: "", isOver21: null }]);
       if (step === "team-setup") {
-        // Coming from registration — load teams then ask about shift selection
+        // Coming from registration — remind the captain that SMS opt-in is
+        // per-person, then continue to the shift-selection prompt.
         refreshData();
-        setStep("shift-choice");
+        setShowOptInNotice(true);
       } else {
         setSuccess("Team created! You can now sign your team up for shifts.");
         setShowTeamForm(false);
+        if (hadPhones) setShowOptInNotice(true);
         refreshData();
       }
     } else {
@@ -939,6 +1005,90 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
     );
   }
 
+  // ── Join a team (offered to individuals right after registering) ──────────
+  if (step === "join-team") {
+    const chosen = allTeams.find((t) => t.id === joinTeamId);
+    return (
+      <div className="max-w-lg mx-auto mt-16 px-4 pb-16">
+        <div className="bg-white rounded-xl shadow-md p-8 border border-teal-200">
+          <div className="text-center mb-6">
+            <div className="text-5xl mb-3">👋</div>
+            <h1 className="text-2xl font-bold text-teal-900 mb-2">
+              Welcome, {volunteer?.name}!
+            </h1>
+            <p className="text-gray-600 text-sm">
+              Are you volunteering with a group? Join their team and your captain can
+              coordinate your shifts. Otherwise just skip — you can still pick shifts on
+              your own.
+            </p>
+          </div>
+
+          {error && <div className="bg-red-50 text-red-700 p-3 rounded mb-4 text-sm">{error}</div>}
+
+          <div className="space-y-5">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Choose a team
+              </label>
+              <select
+                value={joinTeamId}
+                onChange={(e) => setJoinTeamId(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 focus:ring-2 focus:ring-teal-400 outline-none bg-white"
+              >
+                <option value="">— Select a team —</option>
+                {allTeams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} (captain: {t.leader?.name || "—"}, {t.members.length} member
+                    {t.members.length !== 1 ? "s" : ""})
+                  </option>
+                ))}
+              </select>
+              {chosen && (
+                <p className="text-xs text-teal-700 mt-2">
+                  You&apos;ll appear on {chosen.leader?.name || "the captain"}&apos;s roster for{" "}
+                  <strong>{chosen.name}</strong>.
+                </p>
+              )}
+            </div>
+
+            {joinTeamId && (
+              <div className="space-y-3">
+                <p className="text-sm font-medium text-gray-700">How do you want shifts handled?</p>
+                <button
+                  onClick={() => handleJoinTeam("shifts")}
+                  disabled={joinLoading}
+                  className="w-full bg-teal-700 text-white rounded-xl p-4 text-left hover:bg-teal-800 transition-colors disabled:opacity-50"
+                >
+                  <div className="font-bold">📅 I&apos;ll pick my own shifts</div>
+                  <div className="text-teal-200 text-xs mt-0.5">
+                    Join the team, then browse and choose shifts yourself.
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleJoinTeam("captain")}
+                  disabled={joinLoading}
+                  className="w-full bg-white border-2 border-teal-200 text-gray-800 rounded-xl p-4 text-left hover:bg-teal-50 transition-colors disabled:opacity-50"
+                >
+                  <div className="font-bold">🧢 Let my captain assign me</div>
+                  <div className="text-gray-500 text-xs mt-0.5">
+                    Join the team and wait — your captain will put you on shifts.
+                  </div>
+                </button>
+              </div>
+            )}
+
+            <button
+              onClick={() => { setJoinTeamId(""); setIsNewSignup(true); setActiveTab("shifts"); setStep("dashboard"); }}
+              className="w-full text-gray-500 text-sm hover:text-gray-700 transition-colors pt-1"
+            >
+              Skip — I&apos;m volunteering on my own
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── Team setup (immediately after team-lead registration) ─────────────────
   if (step === "team-setup") {
     return (
@@ -1062,6 +1212,26 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
             </button>
           </div>
         </div>
+
+        {/* SMS opt-in reminder — a captain can't consent for their members */}
+        {showOptInNotice && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 text-center">
+              <div className="text-4xl mb-3">📱</div>
+              <h2 className="text-lg font-bold text-teal-900 mb-3">One more thing</h2>
+              <p className="text-sm text-gray-700 leading-relaxed mb-5">
+                If you want your team members to receive automated text reminders, please
+                have each person sign in to opt in for messages. Thank you captain!
+              </p>
+              <button
+                onClick={() => { setShowOptInNotice(false); setStep("shift-choice"); }}
+                className="w-full bg-teal-700 text-white py-2.5 rounded-lg font-semibold hover:bg-teal-800 transition-colors"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1258,7 +1428,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 bg-amber-100 rounded-lg p-1">
-        {(volunteer?.role === "team_lead" || volunteer?.pendingRole === "team_lead" || myTeams.length > 0 ? ["shifts", "my-schedule", "my-team"] as const : ["shifts", "my-schedule"] as const).map((tab) => (
+        {(volunteer?.role === "team_lead" || volunteer?.pendingRole === "team_lead" || myTeams.length > 0 || memberTeams.length > 0 ? ["shifts", "my-schedule", "my-team"] as const : ["shifts", "my-schedule"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -1701,6 +1871,26 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
         );
       })()}
 
+      {/* SMS opt-in reminder after creating a team from the dashboard */}
+      {showOptInNotice && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 text-center">
+            <div className="text-4xl mb-3">📱</div>
+            <h2 className="text-lg font-bold text-teal-900 mb-3">One more thing</h2>
+            <p className="text-sm text-gray-700 leading-relaxed mb-5">
+              If you want your team members to receive automated text reminders, please
+              have each person sign in to opt in for messages. Thank you captain!
+            </p>
+            <button
+              onClick={() => setShowOptInNotice(false)}
+              className="w-full bg-teal-700 text-white py-2.5 rounded-lg font-semibold hover:bg-teal-800 transition-colors"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Duplicate shift time warning modal */}
       {dupWarningShiftId && (() => {
         const target = shifts.find((s) => s.id === dupWarningShiftId);
@@ -1740,7 +1930,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
       })()}
 
       {/* ========= MY TEAM TAB ========= */}
-      {activeTab === "my-team" && (volunteer?.role === "team_lead" || volunteer?.pendingRole === "team_lead" || myTeams.length > 0) && (
+      {activeTab === "my-team" && (volunteer?.role === "team_lead" || volunteer?.pendingRole === "team_lead" || myTeams.length > 0 || memberTeams.length > 0) && (
         <div>
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-bold text-teal-900">My Teams</h2>
@@ -1754,6 +1944,102 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
               </button>
             )}
           </div>
+
+          {/* ── Member view: teams this volunteer belongs to but does not lead ── */}
+          {memberTeams.map((team) => {
+            const me = team.members.find((m) => m.volunteer.id === volunteer?.id);
+            const myShifts = (me?.volunteer.assignments || []).filter((a) => a.status === "confirmed");
+            return (
+              <div key={team.id} className="bg-white rounded-xl border border-teal-100 shadow-sm p-5 mb-4">
+                <div className="flex flex-wrap items-center gap-2 mb-3">
+                  <span className="text-lg">👥</span>
+                  <h3 className="font-bold text-lg text-teal-900">{team.name}</h3>
+                  <span className="text-xs bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full">
+                    captain: {team.leader?.name || "—"}
+                  </span>
+                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                    {team.members.length} member{team.members.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
+
+                <div className={`rounded-lg p-3 mb-3 text-sm ${myShifts.length > 0 ? "bg-green-50 border border-green-200" : "bg-amber-50 border border-amber-200"}`}>
+                  {myShifts.length > 0 ? (
+                    <>
+                      <p className="font-medium text-green-900 mb-1.5">Your shifts on this team:</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {myShifts.map((a) => (
+                          <span key={a.id} className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium">
+                            {a.shift.title} {fmt12(a.shift.startTime)}–{fmt12(a.shift.endTime)}
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-amber-900">
+                      No shifts yet — {team.leader?.name || "your captain"} will assign you, or you
+                      can pick your own from{" "}
+                      <button onClick={() => setActiveTab("shifts")} className="underline font-medium">Available Shifts</button>.
+                    </p>
+                  )}
+                </div>
+
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Teammates</p>
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {team.members.map((m) => (
+                    <span
+                      key={m.id}
+                      className={`text-xs px-2 py-0.5 rounded-full ${m.volunteer.id === volunteer?.id ? "bg-teal-100 text-teal-800 font-semibold" : "bg-gray-100 text-gray-700"}`}
+                    >
+                      {m.volunteer.id === team.leaderId && "👑 "}
+                      {m.volunteer.name}{m.volunteer.id === volunteer?.id ? " (you)" : ""}
+                    </span>
+                  ))}
+                </div>
+
+                <button
+                  onClick={async () => {
+                    await fetch("/api/teams/join", {
+                      method: "DELETE",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ volunteerId: volunteer?.id, teamId: team.id }),
+                    });
+                    setSuccess(`You left ${team.name}.`);
+                    refreshData();
+                  }}
+                  className="text-red-400 hover:text-red-600 text-xs font-medium"
+                >Leave this team</button>
+              </div>
+            );
+          })}
+
+          {/* Join a team later — for anyone who skipped at signup */}
+          {myTeams.length === 0 && memberTeams.length === 0 && allTeams.length > 0 && (
+            <div className="bg-teal-50 border border-teal-200 rounded-xl p-5 mb-4">
+              <p className="font-semibold text-teal-900 text-sm mb-1">Volunteering with a group?</p>
+              <p className="text-xs text-teal-800 mb-3">
+                Join their team and your captain can coordinate your shifts.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <select
+                  value={joinTeamId}
+                  onChange={(e) => setJoinTeamId(e.target.value)}
+                  className="flex-1 min-w-[180px] border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-teal-400 outline-none"
+                >
+                  <option value="">— Select a team —</option>
+                  {allTeams.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} (captain: {t.leader?.name || "—"})
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => handleJoinTeam("captain")}
+                  disabled={!joinTeamId || joinLoading}
+                  className="bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-teal-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                >Join Team</button>
+              </div>
+            </div>
+          )}
 
           {/* Sub-tab: Roster | My Team Schedule */}
           {myTeams.length > 0 && (
