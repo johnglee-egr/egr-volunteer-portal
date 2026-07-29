@@ -239,6 +239,14 @@ export default function VolunteerPortal() {
   const timesOverlap = (aStart: string, aEnd: string, bStart: string, bEnd: string) =>
     aStart < bEnd && bStart < aEnd;
 
+  // Order a volunteer's shifts by when they actually work, not by signup order.
+  const byShiftTime = (a: Assignment, b: Assignment) => {
+    const da = new Date(a.shift.date).getTime();
+    const db = new Date(b.shift.date).getTime();
+    if (da !== db && !isNaN(da) && !isNaN(db)) return da - db;
+    return a.shift.startTime.localeCompare(b.shift.startTime);
+  };
+
   const handleSignUp = (shiftId: string) => {
     if (!volunteer) return;
     setError("");
@@ -488,6 +496,57 @@ export default function VolunteerPortal() {
     refreshData();
   };
 
+  /**
+   * Clear every scrap of the current person's session.
+   *
+   * Logging out used to only clear `step` and `volunteer`, so the next person to
+   * register on the same device inherited the previous one's form state — most
+   * dangerously their 21+ answer, which let an unverified volunteer be stored as
+   * 21+ and claim an alcohol-service shift. Banners, the selected category and
+   * the active tab bled across too.
+   */
+  const resetSession = () => {
+    setVolunteer(null);
+    setStep("choose");
+    // Login + registration fields
+    setName("");
+    setContact("");
+    setEmail("");
+    setPhone("");
+    setIsOver21(null);
+    setSmsConsent(false);
+    setContactPref("both");
+    setRegisterAsTeamLead(false);
+    // Transient UI state
+    setError("");
+    setSuccess("");
+    setActiveTab("shifts");
+    setSelectedCategory(null);
+    setIsNewSignup(false);
+    setDupWarningShiftId(null);
+    setRemovingAssignmentId(null);
+    setMemberSignUpModal(null);
+    setShowOptInNotice(false);
+    // Team state
+    setMyTeams([]);
+    setMemberTeams([]);
+    setAllTeams([]);
+    setJoinTeamId("");
+    setShowTeamForm(false);
+    setNewTeamName("");
+    setNewTeamMembers([{ name: "", phone: "", isOver21: null }]);
+    setAddMemberName("");
+    setAddMemberPhone("");
+    // Partner form
+    setShowPairForm(false);
+    setPartnerName("");
+    setPartnerEmail("");
+    setPartnerPhone("");
+    setPartnerIsOver21(null);
+    setRegisterPartner(false);
+    setPairMessage("");
+  };
+
   // Answer the 21+ question after the fact. Volunteers a captain added by name
   // arrive with no age on file, which silently blocks alcohol-service shifts.
   const handleSetAge = async (over21: boolean) => {
@@ -670,7 +729,15 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
         <p className="text-center text-gray-500 mb-10">Volunteer Portal</p>
         <div className="flex flex-col gap-5">
           <button
-            onClick={() => { setError(""); setStep("register"); }}
+            onClick={() => {
+              // Start every registration from a blank form — never inherit a
+              // previous registrant's answers (notably the 21+ radio).
+              setError(""); setSuccess("");
+              setName(""); setEmail(""); setPhone("");
+              setIsOver21(null); setSmsConsent(false);
+              setContactPref("both"); setRegisterAsTeamLead(false);
+              setStep("register");
+            }}
             className="group w-full bg-green-700 hover:bg-green-800 text-white rounded-2xl p-8 text-left shadow-md transition-colors"
           >
             <div className="text-4xl mb-3">🌱</div>
@@ -1294,7 +1361,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
             Request Partner
           </button>
           <button
-            onClick={() => { setStep("choose"); setVolunteer(null); }}
+            onClick={resetSession}
             className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-300 transition-colors"
           >
             Log Out
@@ -1452,12 +1519,31 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                 <a href={SMS_PRIVACY_URL} target="_blank" rel="noopener noreferrer" className="underline font-medium">Privacy Policy</a>.
               </p>
             </div>
-            <button
-              onClick={handleSelfOptIn}
-              className="bg-blue-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-blue-800 transition-colors whitespace-nowrap shrink-0"
-            >
-              Yes, text me
-            </button>
+            <div className="flex gap-2 shrink-0">
+              <button
+                onClick={handleSelfOptIn}
+                className="bg-blue-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-blue-800 transition-colors whitespace-nowrap"
+              >
+                Yes, text me
+              </button>
+              {/* "Consent is not a condition of volunteering" has to be true in
+                  the UI too — declining must be possible and must stick. */}
+              <button
+                onClick={async () => {
+                  if (!volunteer) return;
+                  await fetch("/api/volunteers/consent", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ volunteerId: volunteer.id, smsConsent: false }),
+                  });
+                  setSuccess("No problem — we'll email you instead.");
+                  refreshData();
+                }}
+                className="bg-white border border-gray-300 text-gray-600 px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors whitespace-nowrap"
+              >
+                No thanks
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1596,6 +1682,15 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                           </div>
                           <div>
                             <h4 className="font-bold text-amber-900">{shift.title}</h4>
+                            {/* Date belongs on the card you choose from, not only
+                                in My Schedule after you've already committed. */}
+                            {shift.date && (
+                              <p className="text-xs font-medium text-amber-700">
+                                {new Date(shift.date).toLocaleDateString("en-US", {
+                                  weekday: "long", month: "long", day: "numeric",
+                                })}
+                              </p>
+                            )}
                             {shift.description && <p className="text-xs text-gray-500 mt-0.5">{shift.description}</p>}
                           </div>
                         </div>
@@ -1692,7 +1787,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                     {locked > 0 ? (
                       <>
                         <span className="font-semibold text-green-700">
-                          ✅ {locked} shift{locked !== 1 ? "s" : ""} confirmed — you&apos;re signed up.
+                          {`✅ ${locked} shift${locked !== 1 ? "s" : ""} confirmed — you're signed up.`}
                         </span>
                         {" "}Keep browsing, or finish up.
                       </>
@@ -1777,7 +1872,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
       {activeTab === "my-schedule" && myTeams.length === 0 && (
         <div className="space-y-4">
           {/* Pending requests */}
-          {volunteer?.assignments.filter((a) => a.status === "pending").map((assignment) => (
+          {volunteer?.assignments.filter((a) => a.status === "pending").sort(byShiftTime).map((assignment) => (
             <div key={assignment.id} className="bg-yellow-50 rounded-lg shadow-sm border border-yellow-200 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2">
@@ -1805,7 +1900,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
           ))}
 
           {/* Confirmed assignments */}
-          {volunteer?.assignments.filter((a) => a.status === "confirmed").map((assignment) => (
+          {volunteer?.assignments.filter((a) => a.status === "confirmed").sort(byShiftTime).map((assignment) => (
             <div key={assignment.id} className="bg-white rounded-lg shadow-sm border border-green-200 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2">
