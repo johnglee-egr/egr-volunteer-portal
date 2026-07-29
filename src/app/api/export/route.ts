@@ -248,10 +248,16 @@ async function coverageExport(format: string) {
 
 function csvResponse(filename: string, rows: Record<string, unknown>[]): NextResponse {
   const csv = toCSV(rows);
+  // HTTP headers must be latin-1. Shift titles contain an em-dash ("Pour — Shift
+  // 1"), so passing one through unescaped threw and made every per-shift roster
+  // export fail with a 500. Send an ASCII-safe filename plus RFC 5987
+  // filename* so clients that support it still get the original characters.
+  const asciiName = filename.replace(/[^\x20-\x7E]/g, "-").replace(/["\\]/g, "");
+  const encoded = encodeURIComponent(filename);
   return new NextResponse(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Disposition": `attachment; filename="${asciiName}"; filename*=UTF-8''${encoded}`,
     },
   });
 }
