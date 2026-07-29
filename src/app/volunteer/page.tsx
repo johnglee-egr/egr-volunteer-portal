@@ -148,6 +148,8 @@ export default function VolunteerPortal() {
   const [addMemberName, setAddMemberName] = useState("");
   const [addMemberPhone, setAddMemberPhone] = useState("");
   const [addMemberOver21, setAddMemberOver21] = useState(false);
+  // Inline confirm for leaving a team you belong to
+  const [leavingTeamId, setLeavingTeamId] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/shifts").then((r) => r.json()).then(setShifts);
@@ -325,6 +327,10 @@ export default function VolunteerPortal() {
         partnerPhone: partnerPhone || null,
         partnerEmail: registerPartner ? partnerEmail || null : null,
         partnerIsOver21: registerPartner ? partnerIsOver21 : undefined,
+        // Only create a volunteer record for the partner when the requester
+        // explicitly asked to sign them up — otherwise we'd be registering a
+        // third party on someone else's say-so.
+        createPartnerIfMissing: registerPartner,
         message: pairMessage || null,
       }),
     });
@@ -344,9 +350,11 @@ export default function VolunteerPortal() {
       refreshData();
     } else {
       const data = await res.json();
-      if (data.error?.includes("Please provide their email or phone")) {
+      if (data.partnerNotFound || data.error?.includes("Please provide their email or phone")) {
+        // Surface the sign-them-up checkbox already ticked so the requester
+        // makes a deliberate choice to create a record for another person.
         setRegisterPartner(true);
-        setError(`"${partnerName}" isn't registered yet. Add their email or phone below to sign them up!`);
+        setError(`We couldn't find "${partnerName}" in the system yet. Check the box below and we'll sign them up along with your request.`);
       } else {
         setError(data.error || "Could not submit partner request.");
       }
@@ -1576,7 +1584,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 bg-amber-100 rounded-lg p-1">
-        {(volunteer?.role === "team_lead" || volunteer?.pendingRole === "team_lead" || myTeams.length > 0 || memberTeams.length > 0 ? ["shifts", "my-schedule", "my-team"] as const : ["shifts", "my-schedule"] as const).map((tab) => (
+        {(["shifts", "my-schedule", "my-team"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -2109,7 +2117,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
       })()}
 
       {/* ========= MY TEAM TAB ========= */}
-      {activeTab === "my-team" && (volunteer?.role === "team_lead" || volunteer?.pendingRole === "team_lead" || myTeams.length > 0 || memberTeams.length > 0) && (
+      {activeTab === "my-team" && (
         <div>
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-bold text-teal-900">My Teams</h2>
@@ -2175,18 +2183,35 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                   ))}
                 </div>
 
-                <button
-                  onClick={async () => {
-                    await fetch("/api/teams/join", {
-                      method: "DELETE",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ volunteerId: volunteer?.id, teamId: team.id }),
-                    });
-                    setSuccess(`You left ${team.name}.`);
-                    refreshData();
-                  }}
-                  className="text-red-400 hover:text-red-600 text-xs font-medium"
-                >Leave this team</button>
+                {leavingTeamId === team.id ? (
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-gray-600">
+                      Leave {team.name}?{myShifts.length > 0 && ` This also gives up ${myShifts.length} shift${myShifts.length !== 1 ? "s" : ""} your captain assigned.`}
+                    </span>
+                    <button
+                      onClick={async () => {
+                        setLeavingTeamId(null);
+                        await fetch("/api/teams/join", {
+                          method: "DELETE",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ volunteerId: volunteer?.id, teamId: team.id }),
+                        });
+                        setSuccess(`You left ${team.name}. You can join another team any time from this tab.`);
+                        await refreshData();
+                      }}
+                      className="bg-red-600 text-white px-2 py-0.5 rounded text-xs font-medium hover:bg-red-700"
+                    >Yes, leave</button>
+                    <button
+                      onClick={() => setLeavingTeamId(null)}
+                      className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs font-medium hover:bg-gray-200"
+                    >Stay</button>
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => setLeavingTeamId(team.id)}
+                    className="text-red-400 hover:text-red-600 text-xs font-medium"
+                  >Leave this team</button>
+                )}
               </div>
             );
           })}
@@ -2289,9 +2314,13 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
             </div>
           )}
 
-          {/* My Teams List */}
-          {myTeams.length === 0 && !showTeamForm && (
-            <p className="text-gray-500 text-center py-8">You haven&apos;t created any teams yet. Click &quot;+ Create Team&quot; to get started!</p>
+          {/* Captain empty state — only when they neither lead NOR belong to a
+              team, so it can't render underneath a membership card and tell a
+              member "you haven't created any teams yet". */}
+          {myTeams.length === 0 && memberTeams.length === 0 && !showTeamForm && allTeams.length === 0 && (
+            <p className="text-gray-500 text-center py-8">
+              No teams exist yet. Click &quot;+ Create Team&quot; if you&apos;re organizing a group!
+            </p>
           )}
 
           {myTeams.map((team) => (

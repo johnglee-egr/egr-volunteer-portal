@@ -44,7 +44,20 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 3. Still not found — create a new volunteer (phone required for reminders)
+    // 3. Still not found. Creating a volunteer record for another person is only
+    //    allowed when the requester explicitly asked to sign them up — otherwise
+    //    we'd be registering a third party, with their phone number, on someone
+    //    else's say-so and with no opt-in from them.
+    if (!partner && !body.createPartnerIfMissing) {
+      return NextResponse.json(
+        {
+          error: `We couldn't find a volunteer named "${partnerName}". If they haven't signed up yet, tick "My partner isn't registered yet — sign them up" and we'll add them.`,
+          partnerNotFound: true,
+        },
+        { status: 404 }
+      );
+    }
+
     if (!partner) {
       if (!partnerPhone) {
         return NextResponse.json(
