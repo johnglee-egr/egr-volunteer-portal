@@ -104,6 +104,15 @@ model Notification {
   status      String   @default("pending") // pending, sent, failed
   sentAt      DateTime?
   createdAt   DateTime @default(now())
+
+  // Carrier delivery tracking. `status` only records that Twilio ACCEPTED the
+  // message; these record what actually happened to it afterwards, reported
+  // asynchronously via the StatusCallback webhook.
+  providerSid    String?   @unique   // Twilio message SID (SM...)
+  deliveryStatus String?             // queued|sending|sent|delivered|undelivered|failed
+  errorCode      String?             // e.g. 30003 unreachable, 30006 landline, 21610 unsubscribed
+  errorMessage   String?
+  deliveredAt    DateTime?
 }
 
 model VolunteerGroup {

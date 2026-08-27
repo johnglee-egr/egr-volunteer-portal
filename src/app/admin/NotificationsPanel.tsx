@@ -9,6 +9,8 @@ interface Volunteer { id: string; name: string; email?: string; phone?: string; 
 interface NotificationRecord {
   id: string; type: string; recipient: string; subject?: string;
   message: string; status: string; sentAt?: string; createdAt: string;
+  deliveryStatus?: string | null; errorCode?: string | null;
+  errorMessage?: string | null; deliveredAt?: string | null;
 }
 
 interface NotificationTemplate {
@@ -776,7 +778,28 @@ export default function NotificationsPanel({
                     <td className="px-4 py-3 text-xs text-gray-700 max-w-[140px] truncate">{n.recipient}</td>
                     <td className="px-4 py-3 text-gray-600 max-w-xs truncate">{n.subject || n.message.substring(0, 60)}</td>
                     <td className="px-4 py-3">
+                      {/* `status` only says Twilio accepted it. deliveryStatus is
+                          what the carrier actually reported back. */}
                       <span className={statusBadge(n.status)}>{n.status}</span>
+                      {n.deliveryStatus && n.deliveryStatus !== n.status && (
+                        <span
+                          className={`ml-1 px-2 py-0.5 rounded text-xs font-medium ${
+                            n.deliveryStatus === "delivered"
+                              ? "bg-green-100 text-green-700"
+                              : n.deliveryStatus === "undelivered" || n.deliveryStatus === "failed"
+                              ? "bg-red-100 text-red-700"
+                              : "bg-gray-100 text-gray-600"
+                          }`}
+                          title={n.errorMessage || undefined}
+                        >
+                          {n.deliveryStatus}
+                        </span>
+                      )}
+                      {n.errorMessage && (
+                        <span className="block text-xs text-red-600 mt-0.5 max-w-[220px]">
+                          {n.errorCode ? `${n.errorCode}: ` : ""}{n.errorMessage}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">
                       {n.sentAt ? new Date(n.sentAt).toLocaleString() : "-"}

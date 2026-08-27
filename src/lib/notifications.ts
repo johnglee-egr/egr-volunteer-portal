@@ -1,6 +1,7 @@
 import nodemailer from "nodemailer";
 import { prisma } from "./db";
 import { fmt12 } from "./formatters";
+import { publicWebhookUrl } from "./twilio";
 import { buildShiftEvent, buildGoogleCalendarUrl, generateICS } from "./ics";
 
 // ── Low-level send functions ─────────────────────────────────────────────────
@@ -107,6 +108,13 @@ export async function sendSMS(to: string, message: string) {
   }
 
   try {
+    // Ask Twilio to report the real delivery outcome. A 2xx here only means the
+    // message was QUEUED — undeliverable numbers, landlines and carrier blocks
+    // all return 2xx, and were previously recorded as a success.
+    const body: Record<string, string> = { To: to, From: fromNumber, Body: message };
+    const statusCallback = publicWebhookUrl("/api/webhooks/twilio/status");
+    if (statusCallback.startsWith("https://")) body.StatusCallback = statusCallback;
+
     const response = await fetch(
       `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
       {
@@ -115,17 +123,41 @@ export async function sendSMS(to: string, message: string) {
           "Content-Type": "application/x-www-form-urlencoded",
           Authorization: "Basic " + Buffer.from(`${accountSid}:${authToken}`).toString("base64"),
         },
-        body: new URLSearchParams({ To: to, From: fromNumber, Body: message }),
+        body: new URLSearchParams(body),
       }
     );
-    if (!response.ok) throw new Error(`Twilio error: ${response.status}`);
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(`Twilio error ${response.status}: ${detail.slice(0, 200)}`);
+    }
+
+    // Capture the SID so the status callback can find this record later, and so
+    // any message can be traced back to Twilio's logs after the fact.
+    const payload = await response.json().catch(() => ({} as Record<string, unknown>));
+    const sid = typeof payload.sid === "string" ? payload.sid : null;
+
     await prisma.notification.create({
-      data: { type: "sms", recipient: to, message, status: "sent", sentAt: new Date() },
+      data: {
+        type: "sms",
+        recipient: to,
+        message,
+        status: "sent",
+        sentAt: new Date(),
+        providerSid: sid,
+        deliveryStatus: typeof payload.status === "string" ? payload.status : "queued",
+      },
     });
-    return { success: true };
+    return { success: true, sid };
   } catch (error) {
+    console.error("[SMS ERROR]", error);
     await prisma.notification.create({
-      data: { type: "sms", recipient: to, message, status: "failed" },
+      data: {
+        type: "sms",
+        recipient: to,
+        message,
+        status: "failed",
+        errorMessage: error instanceof Error ? error.message.slice(0, 300) : String(error),
+      },
     });
     return { success: false, error };
   }
