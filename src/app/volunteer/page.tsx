@@ -46,7 +46,7 @@ const SMS_PRIVACY_URL = "https://www.egrharvestfest.com/privacy-policy.html";
 const SMS_TERMS_URL = "https://www.egrharvestfest.com/terms-and-conditions.html";
 const SMS_CONSENT_TEXT =
   "Yes, text me shift reminders. I agree to receive recurring automated SMS text " +
-  "messages from the EGR Harvest + Beer Festival about my volunteer shifts at the " +
+  "messages from EGR Harvest Fest about my volunteer shifts at the " +
   "number provided. Message frequency varies (about 5-10 messages per festival " +
   "season). Message and data rates may apply. Reply STOP to cancel, HELP for help. " +
   `Terms: ${SMS_TERMS_URL} Privacy: ${SMS_PRIVACY_URL}`;
@@ -927,7 +927,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                 />
                 <span className="text-sm text-gray-800 leading-snug">
                   Yes, text me shift reminders. I agree to receive recurring automated SMS
-                  text messages from the EGR Harvest + Beer Festival about my volunteer
+                  text messages from EGR Harvest Fest about my volunteer
                   shifts at the number provided. Message frequency varies (about 5&ndash;10
                   messages per festival season). Message and data rates may apply. Reply
                   STOP to cancel, HELP for help. See our{" "}
@@ -1529,7 +1529,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
               <p className="font-semibold text-blue-900 text-sm mb-1">📱 Want text reminders about your shifts?</p>
               <p className="text-xs text-blue-800 leading-snug">
                 Get a text before each shift you&apos;re assigned. By turning this on you agree to
-                receive recurring automated SMS from the EGR Harvest + Beer Festival at{" "}
+                receive recurring automated SMS from EGR Harvest Fest at{" "}
                 <strong>{volunteer.phone}</strong>. Message frequency varies (about 5&ndash;10 per
                 festival season). Message and data rates may apply. Reply STOP to cancel, HELP for
                 help. See our{" "}
