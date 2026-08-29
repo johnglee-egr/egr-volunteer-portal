@@ -100,6 +100,9 @@ interface PartnerModal {
 
 export default function AdminDashboard() {
   const [authenticated, setAuthenticated] = useState(false);
+  // True when an admin-gated fetch came back 401 — the session lapsed while the
+  // dashboard was open. Distinguishes "signed out" from "no data".
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
 
@@ -433,25 +436,54 @@ export default function AdminDashboard() {
   };
 
   const loadData = async () => {
+    // Several of these endpoints are admin-gated. Previously this called
+    // .json() with no status check, so a 401 body ({"error":"Unauthorized"})
+    // was written straight into state — volunteers became an object, the first
+    // volunteers.map() threw, and the ENTIRE dashboard rendered blank with no
+    // explanation. It looked exactly like the data had been deleted.
+    let sawAuthFailure = false;
+
+    const getJson = async <T,>(url: string, fallback: T): Promise<T> => {
+      try {
+        const r = await fetch(url);
+        if (r.status === 401 || r.status === 403) {
+          sawAuthFailure = true;
+          return fallback;
+        }
+        if (!r.ok) {
+          console.error(`[admin] ${url} -> ${r.status}`);
+          return fallback;
+        }
+        const data = await r.json();
+        // Never let a non-array response poison array state.
+        if (Array.isArray(fallback) && !Array.isArray(data)) return fallback;
+        return data as T;
+      } catch (e) {
+        console.error(`[admin] ${url} failed`, e);
+        return fallback;
+      }
+    };
+
     const [c, s, v, p, n, st, pa, g, t] = await Promise.all([
-      fetch("/api/categories").then((r) => r.json()),
-      fetch("/api/shifts").then((r) => r.json()),
-      fetch("/api/volunteers").then((r) => r.json()),
-      fetch("/api/pair-requests").then((r) => r.json()),
-      fetch("/api/notifications").then((r) => r.json()),
-      fetch("/api/settings").then((r) => r.json()),
-      fetch("/api/assignments?status=pending").then((r) => r.json()),
-      fetch("/api/groups").then((r) => r.json()),
-      fetch("/api/teams").then((r) => r.json()),
+      getJson<Category[]>("/api/categories", []),
+      getJson<Shift[]>("/api/shifts", []),
+      getJson<Volunteer[]>("/api/volunteers", []),
+      getJson<PairRequest[]>("/api/pair-requests", []),
+      getJson<Notification[]>("/api/notifications", []),
+      getJson<Record<string, string>>("/api/settings", {}),
+      getJson<PendingAssignment[]>("/api/assignments?status=pending", []),
+      getJson<unknown[]>("/api/groups", []),
+      getJson<Team[]>("/api/teams", []),
     ]);
+
     setCategories(c);
     setShifts(s);
     setVolunteers(v);
     setPairRequests(p);
     setNotifications(n);
     setPendingAssignments(pa);
-    setGroups(g);
-    setTeams(Array.isArray(t) ? t : []);
+    setGroups(g as never[]);
+    setTeams(t);
     setSettings({
       festivalName: st.festivalName || "",
       festivalDate: st.festivalDate || "",
@@ -460,6 +492,15 @@ export default function AdminDashboard() {
       contactPhone: st.contactPhone || "",
       welcomeMessage: st.welcomeMessage || "",
     });
+
+    // Say so plainly rather than showing an empty dashboard that reads as
+    // "all your data is gone".
+    if (sawAuthFailure) {
+      setSessionExpired(true);
+      setError("Your admin session expired — sign in again to see volunteer data. Your data is safe.");
+    } else {
+      setSessionExpired(false);
+    }
   };
 
   const clearMessages = () => { setError(""); setSuccess(""); };
@@ -1717,6 +1758,21 @@ export default function AdminDashboard() {
         </div>
       </div>
 
+      {sessionExpired && (
+        <div className="bg-amber-50 border-2 border-amber-400 rounded-lg p-4 mb-4">
+          <p className="font-semibold text-amber-900 text-sm mb-1">🔒 Your admin session expired</p>
+          <p className="text-sm text-amber-800 mb-3">
+            Volunteer, approval and notification data is hidden until you sign in again.
+            <strong> Nothing has been deleted.</strong>
+          </p>
+          <button
+            onClick={() => { setAuthenticated(false); setSessionExpired(false); }}
+            className="bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-amber-800"
+          >
+            Sign in again
+          </button>
+        </div>
+      )}
       {error && <div className="bg-red-50 text-red-700 p-3 rounded-lg mb-4 text-sm">{error}</div>}
       {success && <div className="bg-green-50 text-green-700 p-3 rounded-lg mb-4 text-sm">{success}</div>}
 
