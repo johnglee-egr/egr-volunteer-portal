@@ -1180,6 +1180,68 @@ export default function AdminDashboard() {
   // Check if a volunteer is paired with anyone (approved pair request)
   const isPaired = (volunteerId: string): boolean => getApprovedPartnerIds(volunteerId).length > 0;
 
+  /**
+   * Every affiliation badge that applies to a volunteer.
+   *
+   * This used to be an if/else chain that returned on the first match, so a
+   * team lead who was also partnered showed only the Team Lead badge and the
+   * partnership became invisible — including the button to split it. Someone
+   * can genuinely be a lead AND partnered AND on a team, so render all of them.
+   * Duplicated in two tables before; both call this now so they cannot drift.
+   */
+  const renderVolunteerStatus = (v: Volunteer, opts: { splittable?: boolean } = {}) => {
+    const badges: React.ReactNode[] = [];
+
+    const ledTeam = teams.find((t: Team) => t.leader.id === v.id);
+    if (v.role === "team_lead") {
+      badges.push(
+        <span key="lead" className="inline-flex items-center gap-1 bg-teal-100 text-teal-800 text-xs px-2 py-0.5 rounded-full font-medium">
+          👑 Team Lead{ledTeam ? ` — ${ledTeam.name}` : ""}
+        </span>
+      );
+    }
+
+    // Only show a team-member badge for a team they don't already lead.
+    const memberTeam = teams.find(
+      (t: Team) => t.id !== ledTeam?.id && t.members.some((m: TeamMemberWithVol) => m.volunteer.id === v.id)
+    );
+    if (memberTeam) {
+      badges.push(
+        <span key="team" className="inline-flex items-center gap-1 bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded-full font-medium">
+          👥 {memberTeam.name} — lead: {memberTeam.leader.name}
+        </span>
+      );
+    }
+
+    const partnerIds = getApprovedPartnerIds(v.id);
+    if (partnerIds.length > 0) {
+      const partnerNames = partnerIds
+        .map((pid) => volunteers.find((vol: Volunteer) => vol.id === pid)?.name || "Unknown")
+        .join(", ");
+      badges.push(
+        <span key="pair" className="inline-flex items-center gap-1 bg-purple-100 text-purple-800 text-xs px-2 py-0.5 rounded-full font-medium">
+          🔗 Partnered w/ {partnerNames}
+          {opts.splittable && (
+            <button
+              onClick={() => showConfirm(`Split the partnership between ${v.name} and ${partnerNames}?`, () => handleSplitPartner(v.id))}
+              className="ml-1 text-purple-500 hover:text-red-600 font-bold leading-none"
+              title="Split partnership"
+            >✕</button>
+          )}
+        </span>
+      );
+    }
+
+    if (badges.length === 0) {
+      return (
+        <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded-full">
+          🙋 Individual
+        </span>
+      );
+    }
+    return <div className="flex flex-wrap gap-1">{badges}</div>;
+  };
+
   // Dissolve all approved partnerships for a volunteer
   const handleSplitPartner = async (volunteerId: string) => {
     const toSplit = pairRequests.filter(
@@ -2759,43 +2821,7 @@ export default function AdminDashboard() {
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          {(() => {
-                            if (v.role === "team_lead") {
-                              const ledTeam = teams.find((t: Team) => t.leader.id === v.id);
-                              return (
-                                <span className="inline-flex items-center gap-1 bg-teal-100 text-teal-800 text-xs px-2 py-0.5 rounded-full font-medium">
-                                  👑 Team Lead{ledTeam ? ` — ${ledTeam.name}` : ""}
-                                </span>
-                              );
-                            }
-                            const memberTeam = teams.find((t: Team) => t.members.some((m: TeamMemberWithVol) => m.volunteer.id === v.id));
-                            if (memberTeam) {
-                              return (
-                                <span className="inline-flex items-center gap-1 bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded-full font-medium">
-                                  👥 {memberTeam.name} — lead: {memberTeam.leader.name}
-                                </span>
-                              );
-                            }
-                            const partnerIds = getApprovedPartnerIds(v.id);
-                            if (partnerIds.length > 0) {
-                              const partnerNames = partnerIds.map((pid) => volunteers.find((vol: Volunteer) => vol.id === pid)?.name || "Unknown").join(", ");
-                              return (
-                                <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-800 text-xs px-2 py-0.5 rounded-full font-medium">
-                                  🔗 Partnered w/ {partnerNames}
-                                  <button
-                                    onClick={() => showConfirm(`Split the partnership between ${v.name} and ${partnerNames}?`, () => handleSplitPartner(v.id))}
-                                    className="ml-1 text-purple-500 hover:text-red-600 font-bold leading-none"
-                                    title="Split partnership"
-                                  >✕</button>
-                                </span>
-                              );
-                            }
-                            return (
-                              <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded-full">
-                                🙋 Individual
-                              </span>
-                            );
-                          })()}
+                          {renderVolunteerStatus(v, { splittable: true })}
                         </td>
                         <td className="px-4 py-3 text-gray-600 w-48 max-w-[12rem] truncate">{v.email || "-"}</td>
                         <td className="px-4 py-3 text-gray-600 w-36 max-w-[9rem]">{v.phone ? formatPhone(v.phone) : "-"}</td>
@@ -2947,38 +2973,7 @@ export default function AdminDashboard() {
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        {(() => {
-                          if (v.role === "team_lead") {
-                            const ledTeam = teams.find((t: Team) => t.leader.id === v.id);
-                            return (
-                              <span className="inline-flex items-center gap-1 bg-teal-100 text-teal-800 text-xs px-2 py-0.5 rounded-full font-medium">
-                                👑 Team Lead{ledTeam ? ` — ${ledTeam.name}` : ""}
-                              </span>
-                            );
-                          }
-                          const memberTeam = teams.find((t: Team) => t.members.some((m: TeamMemberWithVol) => m.volunteer.id === v.id));
-                          if (memberTeam) {
-                            return (
-                              <span className="inline-flex items-center gap-1 bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded-full font-medium">
-                                👥 {memberTeam.name} — lead: {memberTeam.leader.name}
-                              </span>
-                            );
-                          }
-                          const partnerIds = getApprovedPartnerIds(v.id);
-                          if (partnerIds.length > 0) {
-                            const partnerNames = partnerIds.map((pid) => volunteers.find((vol: Volunteer) => vol.id === pid)?.name || "Unknown").join(", ");
-                            return (
-                              <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-800 text-xs px-2 py-0.5 rounded-full font-medium">
-                                🔗 Partnered w/ {partnerNames}
-                              </span>
-                            );
-                          }
-                          return (
-                            <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded-full">
-                              🙋 Individual
-                            </span>
-                          );
-                        })()}
+                        {renderVolunteerStatus(v)}
                       </td>
                       <td className="px-4 py-3 text-gray-600 w-48 max-w-[12rem] truncate">{v.email || "-"}</td>
                       <td className="px-4 py-3 text-gray-600 w-36 max-w-[9rem]">{v.phone ? formatPhone(v.phone) : "-"}</td>

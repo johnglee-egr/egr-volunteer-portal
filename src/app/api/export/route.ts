@@ -206,9 +206,17 @@ async function volunteersExport(format: string) {
         : "";
     }
 
+    // Someone can be on a team AND partnered with someone outside it. This
+    // used to show only the partner, while the admin screen showed only the
+    // team — the same person read differently depending which you opened.
+    // List every affiliation that applies, matching the dashboard.
     const partner = partnerMap.get(v.id);
     const team = teamMap.get(v.id);
-    row["Partner / Team"] = partner ? `Partner: ${partner}` : team ? `Team: ${team}` : "";
+    const parts: string[] = [];
+    if (v.role === "team_lead") parts.push(`Team Lead${team ? `: ${team}` : ""}`);
+    else if (team) parts.push(`Team: ${team}`);
+    if (partner) parts.push(`Partner: ${partner}`);
+    row["Partner / Team"] = parts.join(" · ");
 
     return row;
   });
