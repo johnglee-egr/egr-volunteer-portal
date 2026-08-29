@@ -103,6 +103,9 @@ export default function AdminDashboard() {
   // True when an admin-gated fetch came back 401 — the session lapsed while the
   // dashboard was open. Distinguishes "signed out" from "no data".
   const [sessionExpired, setSessionExpired] = useState(false);
+  // Undefined until the session probe answers, so the login form never flashes
+  // for someone who is already signed in.
+  const [checkingSession, setCheckingSession] = useState(true);
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
 
@@ -434,6 +437,30 @@ export default function AdminDashboard() {
       setAuthError("Invalid password");
     }
   };
+
+  // The admin cookie lives for 7 days but the signed-in flag was React state, so
+  // every refresh dropped a still-valid session back to the login screen. Ask
+  // the server whether the cookie is still good before deciding what to render.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/auth");
+        const d = r.ok ? await r.json() : { authenticated: false };
+        if (cancelled) return;
+        if (d.authenticated) {
+          setAuthenticated(true);
+          await loadData();
+        }
+      } catch {
+        // Offline or server error — fall through to the login screen.
+      } finally {
+        if (!cancelled) setCheckingSession(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadData = async () => {
     // Several of these endpoints are admin-gated. Previously this called
@@ -1689,6 +1716,14 @@ export default function AdminDashboard() {
   );
 
   // Login screen
+  if (checkingSession) {
+    return (
+      <div className="max-w-sm mx-auto mt-32 px-4 text-center text-gray-400 text-sm">
+        Checking your session&hellip;
+      </div>
+    );
+  }
+
   if (!authenticated) {
     return (
       <div className="max-w-sm mx-auto mt-20 px-4">
@@ -1755,6 +1790,20 @@ export default function AdminDashboard() {
               </>
             );
           })()}
+          {/* Sessions now survive a refresh for 7 days, so there has to be a way
+              to end one deliberately — e.g. on a shared festival laptop. */}
+          <button
+            onClick={async () => {
+              await fetch("/api/auth", { method: "DELETE" });
+              setAuthenticated(false);
+              setSessionExpired(false);
+              setPassword("");
+            }}
+            className="bg-gray-100 text-gray-600 px-3 py-1 rounded-full text-sm font-medium hover:bg-gray-200"
+            title="End this admin session on this device"
+          >
+            Log Out
+          </button>
         </div>
       </div>
 

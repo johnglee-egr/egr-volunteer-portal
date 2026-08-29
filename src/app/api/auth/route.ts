@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyPassword } from "@/lib/auth";
+import { verifyPassword, isAdmin } from "@/lib/auth";
+
+/**
+ * Session probe. The admin cookie is httpOnly, so the browser cannot read it —
+ * without this the dashboard had no way to know a valid session already existed
+ * and showed the login screen on every refresh.
+ */
+export async function GET() {
+  return NextResponse.json({ authenticated: await isAdmin() });
+}
 
 export async function POST(req: NextRequest) {
   const { password } = await req.json();
