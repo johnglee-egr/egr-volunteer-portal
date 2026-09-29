@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { isAdmin } from "@/lib/auth";
+import { isAdmin, requireAdmin } from "@/lib/auth";
 
 export async function GET() {
   const shifts = await prisma.shift.findMany({
@@ -36,6 +36,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   const data = await req.json();
 
   // Auto-generate station names if stationCount is provided
@@ -74,9 +75,11 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   const { id, ...data } = await req.json();
   if (data.date) data.date = new Date(data.date);
   if (data.capacity) data.capacity = parseInt(data.capacity);
+  if (data.signupsClosed !== undefined) data.signupsClosed = !!data.signupsClosed;
   const shift = await prisma.shift.update({
     where: { id },
     data,
@@ -85,6 +88,7 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const unauthed = await requireAdmin(); if (unauthed) return unauthed;
   const { id } = await req.json();
   await prisma.shift.delete({ where: { id } });
   return NextResponse.json({ success: true });

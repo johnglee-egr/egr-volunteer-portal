@@ -36,6 +36,7 @@ interface Category {
   stationCount: number;
   volsPerStation: number;
   requiresOver21?: boolean;
+  signupsClosed?: boolean;
   shifts?: { id: string }[];
 }
 
@@ -47,6 +48,7 @@ interface Shift {
   startTime: string;
   endTime: string;
   capacity: number;
+  signupsClosed?: boolean;
   stationNames?: string | null;
   categoryId: string;
   category: Category;
@@ -760,6 +762,45 @@ export default function AdminDashboard() {
       setShiftTitle(""); setShiftDesc(""); setShiftDate(""); setShiftStart(""); setShiftEnd("");
       setShiftCapacity("5"); setShiftCategoryId("");
       loadData();
+    }
+  };
+
+  // Closing sign-ups is how a coordinator says "this is fully staffed" while
+  // slots are still technically open. It stops volunteers and team captains;
+  // an admin can still assign someone into a closed shift on purpose.
+  const handleToggleCategorySignups = async (cat: Category) => {
+    clearMessages();
+    const closing = !cat.signupsClosed;
+    const res = await fetch("/api/categories", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: cat.id, signupsClosed: closing }),
+    });
+    if (res.ok) {
+      setSuccess(closing
+        ? `"${cat.name}" is closed - no one new can sign up for any of its shifts.`
+        : `"${cat.name}" is open for sign-ups again.`);
+      loadData();
+    } else {
+      setError(`Could not ${closing ? "close" : "reopen"} sign-ups for "${cat.name}".`);
+    }
+  };
+
+  const handleToggleShiftSignups = async (shift: Shift) => {
+    clearMessages();
+    const closing = !shift.signupsClosed;
+    const res = await fetch("/api/shifts", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: shift.id, signupsClosed: closing }),
+    });
+    if (res.ok) {
+      setSuccess(closing
+        ? `"${shift.title}" is closed to new volunteers.`
+        : `"${shift.title}" is open for sign-ups again.`);
+      loadData();
+    } else {
+      setError(`Could not ${closing ? "close" : "reopen"} sign-ups for "${shift.title}".`);
     }
   };
 
@@ -1984,6 +2025,9 @@ export default function AdminDashboard() {
                             {cat.requiresOver21 && (
                               <span className="bg-amber-100 text-amber-800 text-xs font-bold px-2 py-0.5 rounded-full">🍺 21+</span>
                             )}
+                            {cat.signupsClosed && (
+                              <span className="bg-gray-200 text-gray-700 text-xs font-bold px-2 py-0.5 rounded-full">🚫 Closed to new sign-ups</span>
+                            )}
                             {/* Assigned / Total */}
                             <span className={`text-sm font-medium ml-1 ${
                               totalAssigned >= totalNeeded && totalNeeded > 0 ? "text-green-600" : "text-gray-500"
@@ -2038,6 +2082,17 @@ export default function AdminDashboard() {
                           className="bg-amber-100 text-amber-800 px-3 py-1.5 rounded text-xs font-medium hover:bg-amber-200"
                         >
                           View Shifts
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleToggleCategorySignups(cat); }}
+                          className={cat.signupsClosed
+                            ? "bg-green-100 text-green-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-green-200"
+                            : "bg-gray-100 text-gray-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-gray-200"}
+                          title={cat.signupsClosed
+                            ? "Let volunteers and team captains sign up for these shifts again"
+                            : "Stop new volunteers and team captains from signing up for any shift in this category"}
+                        >
+                          {cat.signupsClosed ? "Reopen Sign-Ups" : "Close Sign-Ups"}
                         </button>
                         <button
                           onClick={(e) => {
@@ -2145,7 +2200,14 @@ export default function AdminDashboard() {
                 <div key={shift.id} className="bg-white rounded-lg border border-amber-100 p-5">
                   <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                     <div>
-                      <h3 className="font-bold text-lg text-amber-900">{shift.title}</h3>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-bold text-lg text-amber-900">{shift.title}</h3>
+                        {(shift.signupsClosed || selectedCat?.signupsClosed) && (
+                          <span className="bg-gray-200 text-gray-700 text-xs font-bold px-2 py-0.5 rounded-full">
+                            🚫 {selectedCat?.signupsClosed ? "Closed - whole category" : "Closed to new sign-ups"}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-sm text-gray-600 mt-1 space-y-0.5">
                         <p>{fmt12(shift.startTime)} - {fmt12(shift.endTime)}</p>
                         <p>{shift.assignments.length}/{shift.capacity} volunteers assigned</p>
@@ -2164,6 +2226,24 @@ export default function AdminDashboard() {
                       </button>
                       <button onClick={() => setShowAssignForm(showAssignForm === shift.id ? null : shift.id)} className="bg-green-100 text-green-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-green-200">
                         + Assign
+                      </button>
+                      <button
+                        onClick={() => handleToggleShiftSignups(shift)}
+                        disabled={!!selectedCat?.signupsClosed}
+                        className={`px-3 py-1.5 rounded text-xs font-medium ${
+                          selectedCat?.signupsClosed
+                            ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                            : shift.signupsClosed
+                            ? "bg-green-100 text-green-700 hover:bg-green-200"
+                            : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        }`}
+                        title={selectedCat?.signupsClosed
+                          ? "The whole category is closed to new sign-ups - reopen it from the categories list"
+                          : shift.signupsClosed
+                          ? "Let volunteers sign up for this shift again"
+                          : "Stop new volunteers and team captains from signing up for this shift"}
+                      >
+                        {shift.signupsClosed ? "Reopen Sign-Ups" : "Close Sign-Ups"}
                       </button>
                       <button onClick={() => handleDeleteShift(shift.id)} className={btnDanger}>Delete</button>
                     </div>

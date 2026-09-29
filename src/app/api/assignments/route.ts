@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { isAdmin, requireAdmin } from "@/lib/auth";
+import { closedReason, signupsClosedFor } from "@/lib/signups";
 
 export async function GET(req: NextRequest) {
   // Admin-only: includes the full volunteer record on every assignment.
@@ -33,6 +34,15 @@ export async function POST(req: NextRequest) {
 
   if (!shift) {
     return NextResponse.json({ error: "Shift not found" }, { status: 404 });
+  }
+
+  // `assignedBy` comes from the caller, so the real session decides who may
+  // bypass the gates below — not a string in the request body.
+  const callerIsAdmin = await isAdmin();
+
+  // Coordinator closed this shift (or its whole category) to new volunteers.
+  if (!callerIsAdmin && signupsClosedFor(shift)) {
+    return NextResponse.json({ error: closedReason(shift) }, { status: 400 });
   }
 
   // Only enforce capacity for volunteer self-signup — admin can always over-assign

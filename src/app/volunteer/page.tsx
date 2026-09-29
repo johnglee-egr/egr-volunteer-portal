@@ -11,8 +11,15 @@ interface Shift {
   startTime: string;
   endTime: string;
   capacity: number;
-  category?: { id: string; name: string; requiresOver21?: boolean };
+  signupsClosed?: boolean;
+  category?: { id: string; name: string; requiresOver21?: boolean; signupsClosed?: boolean };
   assignments: { id: string; volunteer: { id: string; name: string } }[];
+}
+
+// A coordinator closes a shift, or a whole category, once it has enough
+// people even though slots remain open. Nobody new may take it from here.
+function signupsClosed(shift: { signupsClosed?: boolean; category?: { signupsClosed?: boolean } }) {
+  return shift.signupsClosed === true || shift.category?.signupsClosed === true;
 }
 
 interface Assignment {
@@ -1623,6 +1630,8 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                 {Array.from(categoryMap.entries()).map(([catId, { name, shifts: catShifts }]) => {
                   const totalOpen = catShifts.reduce((sum, s) => sum + Math.max(0, s.capacity - s.assignments.length), 0);
                   const totalSlots = catShifts.reduce((sum, s) => sum + s.capacity, 0);
+                  // Closed at the category level, or every shift in it closed individually.
+                  const catClosed = catShifts.length > 0 && catShifts.every(signupsClosed);
                   return (
                     <button
                       key={catId}
@@ -1634,6 +1643,9 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                         {catShifts[0]?.category?.requiresOver21 && (
                           <span className="flex-shrink-0 bg-amber-100 text-amber-800 text-xs font-bold px-2 py-0.5 rounded-full">🍺 21+</span>
                         )}
+                        {catClosed && (
+                          <span className="flex-shrink-0 bg-gray-200 text-gray-600 text-xs font-bold px-2 py-0.5 rounded-full">Closed</span>
+                        )}
                       </div>
                       <p className="text-sm text-gray-500 mt-1">{catShifts.length} shift{catShifts.length !== 1 ? "s" : ""}</p>
                       <div className="mt-2 flex items-center gap-2">
@@ -1643,8 +1655,8 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                             style={{ width: `${totalSlots > 0 ? Math.round(((totalSlots - totalOpen) / totalSlots) * 100) : 100}%` }}
                           />
                         </div>
-                        <span className={`text-xs font-medium ${totalOpen > 0 ? "text-green-700" : "text-red-600"}`}>
-                          {totalOpen > 0 ? `${totalOpen} open` : "Full"}
+                        <span className={`text-xs font-medium ${catClosed ? "text-gray-500" : totalOpen > 0 ? "text-green-700" : "text-red-600"}`}>
+                          {catClosed ? "Fully staffed" : totalOpen > 0 ? `${totalOpen} open` : "Full"}
                         </span>
                       </div>
                     </button>
@@ -1690,6 +1702,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                 // letting the server reject the request after the click.
                 const needs21 = shift.category?.requiresOver21 === true;
                 const ageBlocked = needs21 && volunteer?.isOver21 !== true;
+                const closed = signupsClosed(shift);
 
                 return (
                   <div key={shift.id} className="bg-white rounded-lg shadow-sm border border-amber-100 p-5">
@@ -1721,8 +1734,8 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                             />
                           </div>
                           <span className="text-xs text-gray-500">{filled}/{shift.capacity} filled</span>
-                          <span className={`text-xs font-medium ${available > 0 ? "text-green-700" : "text-red-600"}`}>
-                            {available > 0 ? `${available} open` : "Full"}
+                          <span className={`text-xs font-medium ${closed ? "text-gray-500" : available > 0 ? "text-green-700" : "text-red-600"}`}>
+                            {closed ? "Fully staffed" : available > 0 ? `${available} open` : "Full"}
                           </span>
                         </div>
                       </div>
@@ -1748,7 +1761,17 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                         {!isConfirmed && isPending && (
                           <span className="bg-yellow-100 text-yellow-700 px-4 py-2 rounded-lg text-sm font-medium inline-block text-center">Pending Approval</span>
                         )}
-                        {myTeams.length > 0 && available > 0 && (
+                        {closed && !isConfirmed && !isPending && (
+                          <span className="bg-gray-100 text-gray-600 px-3 py-2 rounded-lg text-xs font-medium inline-block text-center max-w-[190px]">
+                            Sign-ups closed
+                            <span className="block font-normal mt-0.5">
+                              {shift.category?.signupsClosed
+                                ? "This category has all the volunteers it needs."
+                                : "This shift has all the volunteers it needs."}
+                            </span>
+                          </span>
+                        )}
+                        {myTeams.length > 0 && available > 0 && !closed && (
                           <button
                             onClick={() => setMemberSignUpModal({ shift, selectedIds: new Set() })}
                             className="bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-800 transition-colors"
@@ -1756,7 +1779,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                             Sign Up Members
                           </button>
                         )}
-                        {myTeams.length === 0 && !isConfirmed && !isPending && (
+                        {myTeams.length === 0 && !isConfirmed && !isPending && !closed && (
                           ageBlocked ? (
                             <span className="bg-gray-100 text-gray-500 px-3 py-2 rounded-lg text-xs font-medium inline-block text-center max-w-[190px]">
                               🍺 21+ only
@@ -1777,7 +1800,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                             <span className="text-red-600 font-medium text-sm">No spots available</span>
                           )
                         )}
-                        {myTeams.length > 0 && available === 0 && !isConfirmed && !isPending && (
+                        {myTeams.length > 0 && available === 0 && !closed && !isConfirmed && !isPending && (
                           <span className="text-red-600 font-medium text-sm">No spots available</span>
                         )}
                       </div>
@@ -2342,7 +2365,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                     <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
                       <h4 className="font-medium text-amber-900 mb-3">Choose a shift for your whole team:</h4>
                       <div className="space-y-2 max-h-60 overflow-y-auto">
-                        {shifts.filter((s) => s.capacity - s.assignments.length > 0).map((s) => (
+                        {shifts.filter((s) => s.capacity - s.assignments.length > 0 && !signupsClosed(s)).map((s) => (
                           <div key={s.id} className="flex items-center justify-between bg-white rounded-lg p-3 border border-amber-100">
                             <div>
                               <span className="font-medium text-amber-900">{s.title}</span>
@@ -2365,7 +2388,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                   <div className="mb-4">
                     <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">Drag a shift onto a member to assign</p>
                     <div className="flex flex-wrap gap-2">
-                      {shifts.filter((s) => s.capacity - s.assignments.length > 0).map((s) => (
+                      {shifts.filter((s) => s.capacity - s.assignments.length > 0 && !signupsClosed(s)).map((s) => (
                         <div
                           key={s.id}
                           draggable
@@ -2377,7 +2400,7 @@ ${rows.map((r) => `<tr><td style="font-weight:600">${esc(r.name)}</td><td>${esc(
                         </div>
                       ))}
                     </div>
-                    {shifts.filter((s) => s.capacity - s.assignments.length > 0).length === 0 && (
+                    {shifts.filter((s) => s.capacity - s.assignments.length > 0 && !signupsClosed(s)).length === 0 && (
                       <p className="text-xs text-gray-400">No open shifts available</p>
                     )}
                   </div>

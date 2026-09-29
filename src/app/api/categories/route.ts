@@ -66,6 +66,7 @@ export async function PUT(req: NextRequest) {
     if (data.stationCount !== undefined) updateData.stationCount = data.stationCount;
     if (data.volsPerStation !== undefined) updateData.volsPerStation = data.volsPerStation;
     if (data.requiresOver21 !== undefined) updateData.requiresOver21 = !!data.requiresOver21;
+    if (data.signupsClosed !== undefined) updateData.signupsClosed = !!data.signupsClosed;
 
     const category = await prisma.category.update({ where: { id }, data: updateData });
     return NextResponse.json(category);

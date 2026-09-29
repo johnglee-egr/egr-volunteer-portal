@@ -47,6 +47,9 @@ model Category {
   stationCount    Int      @default(1)
   volsPerStation  Int      @default(1)
   requiresOver21  Boolean  @default(false)
+  // Set when a category is fully staffed: volunteers and team captains can no
+  // longer sign up for any of its shifts. Admins can still place people.
+  signupsClosed   Boolean  @default(false)
   createdAt       DateTime @default(now())
   shifts          Shift[]
 }
@@ -59,6 +62,9 @@ model Shift {
   startTime    String
   endTime      String
   capacity     Int          @default(1)
+  // Closes this one shift to new volunteers even while the rest of the
+  // category stays open. A closed category closes all of its shifts.
+  signupsClosed Boolean     @default(false)
   stationNames String?
   categoryId   String
   category     Category     @relation(fields: [categoryId], references: [id])

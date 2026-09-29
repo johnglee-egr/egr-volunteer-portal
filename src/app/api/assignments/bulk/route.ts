@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { isAdmin } from "@/lib/auth";
+import { closedReason, signupsClosedFor } from "@/lib/signups";
 
 // POST /api/assignments/bulk
 //   { shiftId, volunteerIds: string[], stationIndex? }
@@ -30,6 +31,12 @@ export async function POST(req: NextRequest) {
     },
   });
   if (!shift) return NextResponse.json({ error: "Shift not found" }, { status: 404 });
+
+  // A captain signing up their team is still a new sign-up, so a closed shift
+  // stops them. An admin placing people deliberately is not blocked.
+  if (!callerIsAdmin && signupsClosedFor(shift)) {
+    return NextResponse.json({ error: closedReason(shift) }, { status: 400 });
+  }
 
   // Determine the next available station for each new assignment, if a stationed shift
   const isStationed = shift.category?.type === "throughout" && shift.category.stationCount > 1;
