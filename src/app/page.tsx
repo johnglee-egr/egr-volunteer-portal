@@ -9,7 +9,8 @@ interface ShiftData {
   startTime: string;
   endTime: string;
   capacity: number;
-  category?: { name: string };
+  signupsClosed?: boolean;
+  category?: { name: string; signupsClosed?: boolean };
   assignments: { id: string }[];
 }
 
@@ -75,6 +76,8 @@ export default function Home() {
             {shifts.map((shift) => {
               const filled = shift.assignments.length;
               const available = shift.capacity - filled;
+              // Don't advertise spots on a shift nobody can take.
+              const closed = shift.signupsClosed === true || shift.category?.signupsClosed === true;
               return (
                 <div
                   key={shift.id}
@@ -97,12 +100,18 @@ export default function Home() {
                   <div className="mt-3 flex items-center gap-2">
                     <div
                       className={`text-sm font-medium px-2 py-1 rounded ${
-                        available > 0
+                        closed
+                          ? "bg-gray-100 text-gray-600"
+                          : available > 0
                           ? "bg-green-100 text-green-800"
                           : "bg-red-100 text-red-800"
                       }`}
                     >
-                      {available > 0 ? `${available} spot${available !== 1 ? "s" : ""} open` : "Full"}
+                      {closed
+                        ? "Sign-ups closed"
+                        : available > 0
+                        ? `${available} spot${available !== 1 ? "s" : ""} open`
+                        : "Full"}
                     </div>
                     <span className="text-xs text-gray-400">
                       {filled}/{shift.capacity} filled
